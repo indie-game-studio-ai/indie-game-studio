@@ -66,6 +66,7 @@ INT_KEYS = {"sprint", "rework"}
 RUN_PRIORITY = {"ACCEPT": 1, "VERIFY": 2, "PLAN": 3, "WRITE_TESTS": 4}
 TASK_FILE = re.compile(r"^T-(\d+)\.md$")
 LOG_HEADER = "## Log"
+REVIEW_FILE_IN_LOG = re.compile(r"CHANGES_REQUESTED.*\((Studio/[^)]+\.md)\)")
 
 
 class BoardError(Exception):
@@ -251,6 +252,14 @@ def latest_review_context(board, task):
     if reports_dir.is_dir():
         for reviewer in task.get("reviewers"):
             context.extend(sorted(reports_dir.glob(f"S*/{task.id}.{reviewer}.md")))
+    # A batched review covers several tasks in one file, so its path is kept in the log.
+    for line in reversed(task.body.splitlines()):
+        match = REVIEW_FILE_IN_LOG.search(line)
+        if match:
+            path = board.project / match.group(1)
+            if path.is_file() and path not in context:
+                context.append(path)
+            break
     return [str(path.relative_to(board.project)) for path in context]
 
 
@@ -331,8 +340,37 @@ def command_new(board, args):
     print(task_id)
 
 
+def batch_items(items):
+    groups = {}
+    for item in items:
+        key = (item["kind"], item["role"], item["mode"])
+        group = groups.setdefault(key, {
+            "kind": item["kind"], "role": item["role"], "mode": item["mode"],
+            "ids": [], "titles": [], "context": [],
+        })
+        group["ids"].append(item["id"])
+        group["titles"].append(item["title"])
+        for path in item["context"]:
+            if path not in group["context"]:
+                group["context"].append(path)
+    return list(groups.values())
+
+
 def command_next(board, args):
     items = ready_items(board, args.sprint)
+    if args.batch:
+        groups = batch_items(items)
+        if args.json:
+            print(json.dumps(groups, ensure_ascii=False, indent=2))
+            return
+        if not groups:
+            print("No ready tasks.")
+            return
+        for group in groups:
+            print(f'{group["kind"]} {group["role"]} {group["mode"]} {",".join(group["ids"])}')
+            if group["context"]:
+                print(f'    context: {", ".join(group["context"])}')
+        return
     if args.json:
         print(json.dumps(items, ensure_ascii=False, indent=2))
         return
@@ -346,24 +384,31 @@ def command_next(board, args):
 
 
 def command_start(board, args):
-    task = board.find(args.id)
-    status = task.get("status")
-    if status not in ("todo", "changes"):
-        raise BoardError(f"{task.id}: start works from todo or changes, now {status}")
-    mode = FIX_MODE if status == "changes" else task.get("mode")
-    change_status(task, "doing", f", in progress ({mode})")
-    task.save()
-    print(f"{task.id}: doing")
+    tasks = [board.find(task_id) for task_id in split_ids(args.ids)]
+    for task in tasks:
+        if task.get("status") not in ("todo", "changes"):
+            raise BoardError(f"{task.id}: start works from todo or changes, now {task.get('status')}")
+    for task in tasks:
+        mode = FIX_MODE if task.get("status") == "changes" else task.get("mode")
+        change_status(task, "doing", f", in progress ({mode})")
+        task.save()
+        print(f"{task.id}: doing")
 
 
 def command_finish(board, args):
-    task = board.find(args.id)
-    if task.get("status") not in ("todo", "doing", "changes"):
-        raise BoardError(f"{task.id}: finish works from todo, doing or changes, now {task.get('status')}")
-    task.meta["approvals"] = []
-    change_status(task, "review" if task.get("reviewers") else "done")
-    task.save()
-    print(f"{task.id}: {task.get('status')}")
+    tasks = [board.find(task_id) for task_id in split_ids(args.ids)]
+    for task in tasks:
+        if task.get("status") not in ("todo", "doing", "changes"):
+            raise BoardError(f"{task.id}: finish works from todo, doing or changes, now {task.get('status')}")
+    for task in tasks:
+        task.meta["approvals"] = []
+        change_status(task, "review" if task.get("reviewers") else "done")
+        task.save()
+        print(f"{task.id}: {task.get('status')}")
+
+
+def split_ids(raw_ids):
+    return [task_id for raw in raw_ids for task_id in parse_list(raw)]
 
 
 def command_review(board, args):
@@ -372,18 +417,19 @@ def command_review(board, args):
         raise BoardError(f"{task.id}: a review is possible only in status review, now {task.get('status')}")
     if args.reviewer not in task.get("reviewers"):
         raise BoardError(f"{task.id}: {args.reviewer} is not a reviewer of this task")
+    source = f" ({args.file})" if args.file else ""
     if args.verdict == "approve":
         approvals = task.get("approvals")
         if args.reviewer not in approvals:
             approvals.append(args.reviewer)
         task.meta["approvals"] = approvals
-        task.log(producer_line(task, f"{args.reviewer} — APPROVE"))
+        task.log(producer_line(task, f"{args.reviewer} — APPROVE{source}"))
         if set(task.get("reviewers")) <= set(approvals):
             change_status(task, "done")
     else:
         task.meta["approvals"] = []
         task.meta["rework"] = task.get("rework") + 1
-        task.log(producer_line(task, f"{args.reviewer} — CHANGES_REQUESTED, rework {task.get('rework')}"))
+        task.log(producer_line(task, f"{args.reviewer} — CHANGES_REQUESTED, rework {task.get('rework')}{source}"))
         change_status(task, "changes")
     task.save()
     print(f"{task.id}: {task.get('status')}")
@@ -641,11 +687,18 @@ def build_parser():
     next_parser = sub.add_parser("next", help="tasks and reviews ready to run")
     next_parser.add_argument("--sprint", type=int, help="only this sprint")
     next_parser.add_argument("--json", action="store_true", help="JSON output")
+    next_parser.add_argument("--batch", action="store_true", help="group ready items by role and mode: one agent run per group")
     next_parser.set_defaults(handler=command_next)
 
     for name, handler, help_text in (
-        ("start", command_start, "take a task: todo|changes → doing"),
-        ("finish", command_finish, "finish a task: review if it has reviewers, otherwise done"),
+        ("start", command_start, "take tasks: todo|changes → doing"),
+        ("finish", command_finish, "finish tasks: review if they have reviewers, otherwise done"),
+    ):
+        command = sub.add_parser(name, help=help_text)
+        command.add_argument("ids", nargs="+", help="task ids, e.g. T-007 T-008 or T-007,T-008")
+        command.set_defaults(handler=handler)
+
+    for name, handler, help_text in (
         ("unblock", command_unblock, "unblock: blocked → todo"),
         ("show", command_show, "print the task file"),
     ):
@@ -657,6 +710,7 @@ def build_parser():
     review.add_argument("id", help="task id")
     review.add_argument("reviewer", help="reviewer role")
     review.add_argument("verdict", choices=("approve", "changes"), help="review verdict")
+    review.add_argument("--file", help="review file, e.g. a batched review covering several tasks")
     review.set_defaults(handler=command_review)
 
     set_parser = sub.add_parser("set", help="change fields: key=value, lists +X/-X, rework=+1")

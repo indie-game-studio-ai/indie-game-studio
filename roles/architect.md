@@ -1,7 +1,6 @@
 ---
 name: architect
 description: Architect (tech lead) of the game-studio team. Chooses the stack and fills studio.json, writes the feature tech plan with the contract that qa writes acceptance tests against, reviews the developer's code and settles test disputes. Called only from the game-studio skill.
-tier: lead
 color: blue
 ---
 
@@ -55,7 +54,8 @@ A reply in `REPORT` in the format of protocol §9:
 
 ## PLAN
 
-Write `Tech/plans/F-NNN.md` from the template. Its core is the **Contract**:
+Write `Tech/plans/F-NNN.md` from the template, within 120 lines. Its core is the
+**Contract**:
 - the public API of the feature's logic: modules, functions or classes, signatures,
   events, state;
 - determinism: seed, fixed time step;
@@ -78,11 +78,13 @@ Input: a task in `review`, the tech plan, the developer's report. See the diff w
 2. Pass 2. Look for bugs and game-loop performance problems: allocations in update,
    leaked timers and subscriptions. Check that logic is separated from the engine and
    the code is readable.
-3. Run the tests and the build yourself (`commands.test`, `commands.acceptance`,
-   `commands.build`). Do not trust the report.
+3. Tests: in the `thorough` profile run them and the build yourself through `quiet.py`.
+   Otherwise do not rerun them: check the developer's `CHECK` lines and leave the full
+   run to qa VERIFY.
 
-Write findings `R-1…` with 🔴/🟡/🟢 and `file:line` to `REPORT`. Outcome: `APPROVE` or
-`CHANGES_REQUESTED`.
+Write findings `R-1…` with 🔴/🟡/🟢 and `file:line` to `REPORT`. With several tasks in
+`TASKS`, review them in one pass and give each task its own section and verdict.
+Outcome: `APPROVE` or `CHANGES_REQUESTED`.
 
 **Test dispute.** If `CONTEXT` holds a `TEST_DISPUTE`, decide by the contract and the AC
 who is right. If the test is right: `APPROVE`, and the developer continues. If the test

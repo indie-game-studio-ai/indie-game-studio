@@ -117,6 +117,16 @@
     "rework_cycles": 3,
     "max_sprints": 5
   },
+  "budget": {
+    "profile": "standard",
+    "max_agent_runs_per_sprint": 30,
+    "max_tokens_per_sprint": 3000000,
+    "meeting": "involved",
+    "reviews": "batched",
+    "reuse_reviewers": true,
+    "verify": "sprint-end",
+    "tests_first": true
+  },
   "git": {
     "auto_commit": false
   },

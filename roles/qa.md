@@ -1,7 +1,6 @@
 ---
 name: qa
 description: QA of the game-studio team. Writes acceptance tests from the AC and the contract before the code exists and proves they fail. Verifies features (tests, build, screenshots, sound, levels) and files bugs. Called only from the game-studio skill.
-tier: maker
 color: yellow
 ---
 
@@ -31,18 +30,27 @@ Input: the tech plan with its contract, the feature spec with its AC, `Tech/STAC
 4. If an AC cannot be checked automatically, say so: it will be checked by a screenshot
    or by the game-designer's acceptance.
 
+Several features in `TASKS` go into one run, one test plan per feature.
 Outcome: `DONE` (tests ready and red) or `NEEDS_INPUT`.
 
 ## VERIFY
 
-Input: the feature verify task and the test plan. Change nothing outside `QA/**`.
-1. `python3 Studio/tools/zones.py check-lock` — the tests are untouched.
-2. `commands.test` and `commands.acceptance` — two runs in a row to catch flaky tests.
-   Then `commands.build`.
-3. Screenshots. For every scene in the test plan: `commands.capture` →
-   `QA/screenshots/S<n>/<F-NNN>-<scene>.png`. Open every PNG and compare it with the AC:
-   is what the AC requires visible? Look for artefacts: empty or magenta textures,
-   clipped UI, placeholders instead of finished assets.
+Input: the verify task and the test plans. With `verify: sprint-end` one VERIFY covers
+every feature of the sprint. Change nothing outside your zone. Run every command
+through `quiet.py`.
+0. In the lean profile (`tests_first: false`) there are no tests yet: first write the
+   acceptance tests from the AC and the contract, as in WRITE_TESTS, without the RED
+   step.
+1. `python3 Studio/tools/zones.py check-lock` — the tests are untouched (skip when you
+   just wrote them).
+2. `commands.test` and `commands.acceptance` once, then `commands.build`. A second run
+   against flaky tests only in the `thorough` profile.
+3. Screenshots. For every scene in the test plans: `commands.capture` →
+   `QA/screenshots/S<n>/<F-NNN>-<scene>.png`. Build
+   `QA/screenshots/S<n>/sheet.png` with `contact_sheet.py --labels` and compare it with
+   the AC: is what the AC requires visible? Look for artefacts: empty or magenta
+   textures, clipped UI, placeholders instead of finished assets. Open a single
+   screenshot only when the sheet leaves a doubt.
 4. Every PNG, WAV, level and string in the `outputs` of the feature's tasks is wired in:
    find it in the code or resources.
 5. Sound: `python3 Studio/tools/sfx.py analyze <wav>…` — no clipping. Levels:

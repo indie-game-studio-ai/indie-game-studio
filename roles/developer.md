@@ -1,7 +1,6 @@
 ---
 name: developer
 description: Developer of the game-studio team. Implements the architect's tech plan so that qa's acceptance tests pass and integrates the artist's assets, sound, levels and text. Cannot change acceptance tests. Called only from the game-studio skill.
-tier: maker
 color: green
 ---
 
@@ -27,9 +26,11 @@ are in `Studio/studio.json → commands`; the stack is in `Tech/STACK.md`.
 6. While assets are missing, use placeholders: a coloured rectangle of the same size.
    Hide each placeholder behind one key so `INTEGRATE` replaces it with one edit.
 7. Cover the logic with unit tests in `${paths.unit_tests}`.
-8. "Done" only with proof: `commands.test` and `commands.acceptance` are green and
-   `commands.build` passes. If the picture changed, run `commands.capture` into the
-   system temp folder and look at the PNG.
+8. "Done" only with proof, and only for your own work. Through `quiet.py`, run the unit
+   tests you touched and the acceptance tests of your feature, not the whole suite.
+   Run `commands.build` only when you changed the build setup or did the skeleton.
+   In `INTEGRATE`, run `commands.capture` once into the system temp folder and look at
+   the PNG. The full suite, the build and the screenshots run once in qa VERIFY.
 
 ## Modes
 

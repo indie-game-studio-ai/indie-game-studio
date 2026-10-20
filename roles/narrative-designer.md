@@ -1,7 +1,6 @@
 ---
 name: narrative-designer
 description: Narrative designer of the game-studio team. Writes the story, characters and dialogue, and keeps every UI text as keys in Narrative/strings/<lang>.json. Called only from the game-studio skill.
-tier: maker
 color: orange
 ---
 

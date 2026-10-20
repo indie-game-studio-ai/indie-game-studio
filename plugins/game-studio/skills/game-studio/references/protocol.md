@@ -2,22 +2,26 @@
 
 This file is the contract between the producer and the roles. `studio_init.py` copies it
 into the game project as `Studio/PROTOCOL.md`. All paths below are relative to the game
-project root.
+project root. Roles do not read this file on every run: their own prompt already holds
+the rules they need. They open a section only when a question is not answered there.
 
 ## 1. Roles
 
-| Role | Claude Code (`subagent_type`) | Codex (agent) | Tier |
-|---|---|---|---|
-| producer | main session, skill `game-studio` | main session, `$game-studio` | — |
-| game-designer | `game-studio:game-designer` | `studio-game-designer` | lead |
-| art-director | `game-studio:art-director` | `studio-art-director` | lead |
-| architect | `game-studio:architect` | `studio-architect` | lead |
-| artist | `game-studio:artist` | `studio-artist` | maker |
-| developer | `game-studio:developer` | `studio-developer` | maker |
-| qa | `game-studio:qa` | `studio-qa` | maker |
-| sound-designer | `game-studio:sound-designer` | `studio-sound-designer` | maker |
-| narrative-designer | `game-studio:narrative-designer` | `studio-narrative-designer` | maker |
-| level-designer | `game-studio:level-designer` | `studio-level-designer` | maker |
+| Role | Claude Code (`subagent_type`) | Codex (agent) |
+|---|---|---|
+| producer | main session, skill `game-studio` | main session, `$game-studio` |
+| game-designer | `game-studio:game-designer` | `studio-game-designer` |
+| art-director | `game-studio:art-director` | `studio-art-director` |
+| architect | `game-studio:architect` | `studio-architect` |
+| artist | `game-studio:artist` | `studio-artist` |
+| developer | `game-studio:developer` | `studio-developer` |
+| qa | `game-studio:qa` | `studio-qa` |
+| sound-designer | `game-studio:sound-designer` | `studio-sound-designer` |
+| narrative-designer | `game-studio:narrative-designer` | `studio-narrative-designer` |
+| level-designer | `game-studio:level-designer` | `studio-level-designer` |
+
+Every agent defaults to Sonnet in Claude Code and medium effort in Codex. The producer
+picks the model for each run from the routing table (§14).
 
 Only the producer talks to the user and writes the task board. Roles do not spawn other
 agents and do not talk to each other directly. Everything one role hands to another goes
@@ -45,7 +49,7 @@ user can change it at any time. The producer passes it to every agent as `LANG`.
 ```
 Studio/
   PROTOCOL.md          this file
-  studio.json          stack, language, commands, paths, zones, limits
+  studio.json          stack, language, commands, paths, zones, limits, budget
   ledger.md            producer log: step, sprint, agent ids, gate decisions
   decisions.md         settled decisions (kickoff, gates)
   questions.md         open questions for the next gate
@@ -54,10 +58,10 @@ Studio/
   tasks/T-NNN.md       tasks
   kickoff/             kickoff decision tree
   meetings/S<n>-planning/<role>.md, minutes.md
-  reports/S<n>/<T-NNN>.<role>.md
+  reports/S<n>/<T-NNN | W<k>>.<role>.md
   reviews/art/, reviews/code/
   tools/               studio tools (copied from the skill)
-  .state/              zone snapshots and test locks; internal
+  .state/              zone snapshots, test locks, budget log, command logs; internal
 Design/   GDD.md, backlog.md, features/F-NNN-<slug>.md, balance.md
 References/  Art Bible.md, palette.json, Art TODO.md, Audio TODO.md, mockups/
 Art/      source/ (sprite specs, SVG), export/ (final PNGs unless the engine sets its own folder)
@@ -99,6 +103,12 @@ QA/       test-plans/, reports/, bugs/B-NNN.md, screenshots/S<n>/
     "parallel_agents": 4, "features_per_sprint": 2,
     "rework_cycles": 3, "max_sprints": 5
   },
+  "budget": {
+    "profile": "standard",
+    "max_agent_runs_per_sprint": 30, "max_tokens_per_sprint": 3000000,
+    "meeting": "involved", "reviews": "batched", "reuse_reviewers": true,
+    "verify": "sprint-end", "tests_first": true
+  },
   "git": { "auto_commit": false },
   "autopilot": false
 }
@@ -114,8 +124,9 @@ QA/       test-plans/, reports/, bugs/B-NNN.md, screenshots/S<n>/
   scene.
 
 The architect fills `stack`, `paths`, `commands` and engine zones during
-pre-production. Only the producer changes `language`, `limits`, `git` and
-`autopilot`, and only by the user's decision.
+pre-production. Only the producer changes `language`, `limits`, `budget`, `git` and
+`autopilot`, and only by the user's decision. A budget profile is applied with
+`budget.py profile <name>` (§14).
 
 ## 5. Tasks
 
@@ -156,8 +167,13 @@ A task is ready to work when its status is `todo` or `changes` and all `deps` ar
 `done`. A task in `review` waits for its `reviewers`. A task with no reviewers goes
 straight to `done` after `DONE`.
 
-Feature task template. The producer builds it from the meeting and drops what the
-feature does not need:
+### Feature task templates
+
+The producer builds the tasks from the meeting and drops what the feature does not
+need. The template depends on `budget.reviews`, `budget.verify` and
+`budget.tests_first`.
+
+**standard and thorough** (tests before code):
 
 | # | Task | owner / mode | deps | reviewers |
 |---|---|---|---|---|
@@ -169,8 +185,25 @@ feature does not need:
 | 6 | Levels F | level-designer / WORK | — | game-designer |
 | 7 | Implement F | developer / WORK | 1, 2 | architect |
 | 8 | Integrate assets F | developer / INTEGRATE | 3–7 | architect |
-| 9 | Verify F | qa / VERIFY | 7, 8 | — |
-| 10 | Accept F | game-designer / ACCEPT | 9 | — |
+
+**lean** (tests after code, one review per feature):
+
+| # | Task | owner / mode | deps | reviewers |
+|---|---|---|---|---|
+| 1 | Tech plan F | architect / PLAN | — | — |
+| 2 | Assets F (sound, text, levels as separate tasks only if needed) | artist / WORK | — | — |
+| 3 | Build F: implement and integrate | developer / WORK | 1, 2 | architect |
+
+In lean the art is reviewed once per sprint by the art-director's `SCREEN_REVIEW`, and
+the user sees it at the gate.
+
+**Verification and acceptance:**
+- `verify: sprint-end` (lean, standard): one task per sprint, `qa / VERIFY`, deps = the
+  last developer task of every feature. Then one `game-designer / ACCEPT` per feature,
+  deps = that verify task. In lean, VERIFY first writes the acceptance tests from the
+  AC and the contract, then runs everything.
+- `verify: per-feature` (thorough): per feature, `qa / VERIFY` (deps: tasks 7, 8), then
+  `game-designer / ACCEPT` (deps: verify).
 
 ## 6. Agent prompt
 
@@ -181,14 +214,16 @@ PROJECT=<absolute path to the game project>
 ROLE=<role>
 MODE=<mode>
 LANG=<language code>
+PROFILE=<lean | standard | thorough>
 SPRINT=<n>
-TASK=Studio/tasks/T-NNN.md            (if any)
-REPORT=Studio/reports/S<n>/T-NNN.<role>.md
+TASKS=T-007[,T-008]                   (one task, or a batch of the same role and mode)
+REPORT=<path, see SKILL.md>
 CONTEXT: <paths: reviews, bug reports, meeting files, user answers, stack profile>
 ```
 
-The agent first reads `Studio/PROTOCOL.md` (§2, §5–§13) and `TASK`. Then it reads the
-task `inputs` and `Studio/studio.json`. Anything else only when needed.
+A batch is several tasks with the same role and mode in one run (`board.py next
+--batch`). The agent does all of them, writes one report and gives each task its own
+status in the summary.
 
 ## 7. Role modes
 
@@ -210,8 +245,8 @@ the path to that review, bug or verdict. `MEETING` is a reply at the planning me
 
 ## 8. Report and summary
 
-The agent writes its full report to `REPORT`: what was done, files, how it was checked
-(command and condensed output), what is still doubtful.
+The agent writes its full report to `REPORT`, at most 60 lines: what was done, files,
+how it was checked (command and condensed output), what is still doubtful.
 
 The summary for the producer is at most 15 lines in exactly this shape:
 
@@ -224,6 +259,9 @@ HANDOFF: → <role>: <what to do or look at> (<paths>)
 NEW TASKS: <owner>/<mode>: <title> [deps: T-…] [reviewers: …]
 QUESTIONS: <blocking only; each with a recommended answer>
 ```
+
+For a batch, replace the first two lines with one line per task:
+`T-007: DONE`, `T-008: CHANGES_REQUESTED — R-2, R-3`.
 
 Leave out empty lines. The labels stay in English; the text after them is in `LANG`.
 Status meanings:
@@ -241,11 +279,17 @@ A **handoff** (`HANDOFF`) is an instruction for the next role. The producer writ
 to the task log as `S<n> <from> → <to>: <what>` and uses it to pick the next wave. If a
 handoff needs new work, it goes to `NEW TASKS`.
 
-**Sprint planning meeting** (`Studio/meetings/S<n>-planning/`):
+**Sprint planning meeting** (`Studio/meetings/S<n>-planning/`), by `budget.meeting`:
+- `none` (lean): no meeting. The game-designer's SPEC and the architect's PLAN carry
+  the questions in their summaries.
+- `involved` (standard): only the roles listed in the specs' "Roles needed", plus the
+  architect.
+- `full` (thorough): architect, qa, art-director and every content role the sprint
+  touches.
+
+The meeting itself:
 1. game-designer (SPEC) writes or updates the specs of the sprint's features.
-2. In parallel, each in its own `<role>.md`: architect, artist, sound-designer,
-   narrative-designer, level-designer, qa and art-director (when the sprint brings new
-   visual content). Reply format:
+2. In parallel, each in its own `<role>.md`, at most 25 lines:
    ```
    ## What I need to do
    ## Risks and dependencies
@@ -253,7 +297,6 @@ handoff needs new work, it goes to `NEW TASKS`.
    ## Proposed tasks
    - <owner>/<mode>: <title> [deps: …] [reviewers: …]
    ```
-   A role the feature does not concern answers with one line: "Not involved: <why>".
 3. game-designer (MEETING_RESOLVE) answers the questions, updates specs and AC and writes
    its own `game-designer.md` with the decisions.
 4. The producer writes `minutes.md` with decisions, tasks and dependencies, and creates
@@ -272,11 +315,21 @@ handoff needs new work, it goes to `NEW TASKS`.
 | Code | developer | architect | CODE_REVIEW |
 | Whole feature | everyone | game-designer, after QA VERIFY | ACCEPT |
 
-Reviews go to `Studio/reviews/<art|code>/T-NNN-r<k>.md` or to the reviewer's report.
-Findings are numbered `R-1…` with a severity: 🔴 blocks, 🟡 must fix, 🟢 advice. The
-reviewer changes nothing. Any 🔴 or 🟡 means `CHANGES_REQUESTED`.
+Review policy, by `budget.reviews`:
+- `per-feature` (lean): code is reviewed once per feature on its Build task; art once
+  per sprint through `SCREEN_REVIEW`.
+- `batched` (standard): every task with reviewers is reviewed, but one reviewer run
+  covers all of that reviewer's pending reviews in the wave.
+- `every` (thorough): every task is reviewed in its own fresh run.
 
-Reviewers and acceptance always run as fresh agents without the author's history.
+Reviews go to `Studio/reviews/<art|code>/T-NNN-r<k>.md`, or to one file per batch
+(`Studio/reviews/<art|code>/S<n>-W<k>.md`) with a section per task. Findings are
+numbered `R-1…` with a severity: 🔴 blocks, 🟡 must fix, 🟢 advice. The reviewer changes
+nothing. Any 🔴 or 🟡 means `CHANGES_REQUESTED`.
+
+A reviewer is never the author of the work. With `reuse_reviewers: true` the producer
+continues the same reviewer agent within a sprint; otherwise every review is a fresh
+agent.
 
 ## 11. Write zones and the test lock
 
@@ -285,9 +338,10 @@ A role writes only to its zone from `studio.json` and its own files from
 the zone voids the round and is reverted. In Claude Code a hook also blocks such
 writes.
 
-After `WRITE_TESTS` the producer locks the acceptance tests with `zones.py lock`. If a
-locked test changes, the developer's round is rejected. Only qa may change the tests,
-in a new cycle, and then the producer locks them again.
+After `WRITE_TESTS` (or the lean VERIFY that writes the tests) the producer locks the
+acceptance tests with `zones.py lock`. If a locked test changes, the developer's round
+is rejected. Only qa may change the tests, in a new cycle, and then the producer locks
+them again.
 
 ## 12. Personal TODO lists
 
@@ -303,3 +357,65 @@ in a new cycle, and then the producer locks them again.
 - "Done" needs proof: a command and its output, a path to a file or PNG.
 - No commits, no pushes, no global installs.
 - Write in `LANG`, briefly, one thought per sentence.
+
+## 14. Token economy
+
+The studio must ship the game without burning the budget. Quality comes from the
+right checks at the right time, not from repeating them.
+
+**Profiles.** The user picks one at kickoff; `budget.py profile <name>` writes it to
+`studio.json`.
+
+| | lean | standard | thorough |
+|---|---|---|---|
+| For | prototype, jam, ≤ 3 features | most games | long or risky projects |
+| Meeting | none | involved roles | full |
+| Reviews | per feature | batched per wave | every task, fresh |
+| Tests | written by qa after the code | written by qa before the code | before the code |
+| Full verification | once per sprint | once per sprint | per feature |
+| Features per sprint | 1 | 2 | 2 |
+| Rework rounds | 2 | 3 | 3 |
+| Agent runs per sprint | 15 | 30 | 60 |
+| Tokens per sprint | 1.2M | 3M | 8M |
+
+**Model routing** (`budget.py route <role> <mode>` or `budget.py routes`):
+
+| Work | lean | standard | thorough |
+|---|---|---|---|
+| Decisions: KICKOFF_TREE, SPEC, PLAN, ACCEPT, PREPRO of leads | Sonnet / medium | Opus / high | Opus / high |
+| Reviews | Sonnet / medium | Sonnet / medium | Opus / high |
+| Building: developer, qa, artist, MEETING_RESOLVE | Sonnet / medium | Sonnet / medium | Sonnet / high |
+| Content: sound, narrative, levels | Haiku / low | Sonnet / medium | Sonnet / medium |
+| MEETING replies | Haiku / low | Haiku / low | Sonnet / medium |
+
+A task past its rework limit goes to Opus / high once.
+
+**Spend.** After every agent run the producer records it with `budget.py log` (with the
+token count when the platform reports one). Before every wave it runs `budget.py
+check --next <runs>`. Over the cap means an early gate.
+
+**Running commands.** Every project command goes through
+`python3 Studio/tools/quiet.py "<command>"`. The full output lands in
+`Studio/.state/logs/`; only the status line and the error lines reach the context. Open
+a log only to read the part you need.
+
+**Tests at the end.** Full test runs, the build and the screenshots happen once, in qa
+VERIFY (per sprint in lean and standard). Before that:
+- the developer runs only the tests of its own task: the unit tests it touched and the
+  acceptance tests of its feature;
+- the architect reviews the diff and does not rerun tests, except in thorough;
+- qa runs the suite once; the second run against flaky tests happens only in thorough.
+
+**Reading.** Read only what the task needs:
+- in a feature spec: the player story, the AC and the section for your role;
+- find headings with `grep -n '^## ' <file>` and read a range with `sed -n 'a,bp'`;
+- never read lockfiles, logs in full, generated or binary files;
+- look at one contact sheet instead of many PNGs; open a single PNG only when it is the
+  thing under review.
+
+**Writing.** Size limits: GDD ≤ 150 lines, feature spec ≤ 100, tech plan ≤ 120, Art
+Bible ≤ 80, report ≤ 60, meeting reply ≤ 25, summary ≤ 15. A review lists findings only;
+it does not retell the work.
+
+**Stopping.** "Done when" is the finish line. No polishing beyond it, no checks that
+another role owns.

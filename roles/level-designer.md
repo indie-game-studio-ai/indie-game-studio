@@ -1,7 +1,6 @@
 ---
 name: level-designer
 description: Level designer of the game-studio team. Builds levels in a neutral format (ASCII plus legend to JSON), sets the difficulty curve, checks reachability and makes PNG previews. Called only from the game-studio skill.
-tier: maker
 color: green
 ---
 

@@ -107,13 +107,51 @@ session: `$game-studio <game idea>`.
 ```
 /game-studio:game-studio A space shooter: a ship dodges asteroids
 /game-studio:game-studio brief=docs/brief.md
-/game-studio:game-studio brief=docs/brief.md autopilot
+/game-studio:game-studio brief=docs/brief.md autopilot lean
 ```
 
 - Without arguments the producer resumes from the step recorded in `Studio/ledger.md`.
 - `brief=<file>` — the interview asks only about what the brief does not cover.
-- `autopilot` — gates accept the recommendations themselves; blockers still stop the
-  work. For unattended runs.
+- `autopilot` — gates accept the recommendations themselves; blockers and the budget
+  cap still stop the work. For unattended runs.
+- `lean`, `standard` or `thorough` — the budget profile (see below). Without it, the
+  producer asks at kickoff.
+
+## Token economy
+
+A studio of ten roles can burn a lot of tokens. The producer keeps quality where it
+matters and cuts repetition everywhere else.
+
+| | lean | standard | thorough |
+|---|---|---|---|
+| For | prototype, jam, ≤ 3 features | most games | long or risky projects |
+| Planning meeting | none | involved roles only | full |
+| Reviews | once per feature | batched per wave | every task, fresh reviewer |
+| Acceptance tests | written by QA after the code | written by QA before the code | before the code |
+| Full test run, build, screenshots | once per sprint | once per sprint | per feature |
+| Cap per sprint | 15 agent runs / 1.2M tokens | 30 / 3M | 60 / 8M |
+
+What makes it cheap:
+- **Model per mode, not per role.** Agents default to Sonnet (medium effort in Codex).
+  Opus only for decisions that drive everything else (spec, tech plan, acceptance), Haiku
+  for meeting replies and, in lean, for sound, text and levels. `budget.py routes` shows
+  the table.
+- **Batches.** One agent run does all ready tasks of a role; a reviewer reviews a whole
+  batch at once.
+- **No protocol re-reading.** Each role's prompt holds the rules it needs; documents are
+  read by section, not whole.
+- **Quiet commands.** `quiet.py` keeps test and build logs in a file and shows only the
+  status and the error lines.
+- **Tests at the end.** The full suite, the build and the screenshots run once in QA's
+  verification; the developer runs only its own tests, the architect reviews the diff
+  without rerunning them.
+- **Budget guard.** `budget.py` counts runs and tokens per sprint; over the cap the
+  producer stops and asks you.
+- **Short context.** Size limits for every document and summary. After a sprint gate you
+  can `/clear` and continue: the producer resumes from `Studio/ledger.md`.
+
+Tip: the producer mostly does bookkeeping, so run the main session on a mid-size model
+(`/model sonnet`, `/effort medium`); roles get the model they need anyway.
 
 ## What appears in the game project
 
@@ -152,7 +190,9 @@ Plain Python 3 stdlib, nothing to install. They are copied into `Studio/tools/` 
 | `sfx.py` | procedural SFX (sfxr-like presets) → WAV, peak and clipping analysis |
 | `chiptune.py` | text score → looping WAV |
 | `level_preview.py` | ASCII level → PNG preview, marker and reachability check, JSON export |
-| `board.py` | task board: create, statuses, reviews, ready tasks, BOARD.md |
+| `board.py` | task board: create, statuses, reviews, ready tasks in batches, BOARD.md |
+| `budget.py` | budget profiles, model routing, spend per sprint and the cap check |
+| `quiet.py` | run a command with the full output in a log and only errors on screen |
 | `zones.py` | role write zones, snapshots, test lock, hook |
 | `studio_init.py` | lay out templates and tools in the project |
 
@@ -163,8 +203,9 @@ Plain Python 3 stdlib, nothing to install. They are copied into `Studio/tools/` 
 - Nobody listens to the sound. It is checked by its parameters and WAV analysis.
 - In Codex, write zones rely on instructions and the `zones.py verify` check after each
   wave. The Codex hook does not know which role is writing.
-- The studio spends a lot of tokens. Limits: summaries of at most 15 lines, paths instead
-  of contents, at most 4 agents per wave, 2 features per sprint, 3 rework rounds.
+- Token counts come from the platform. Claude Code reports them per agent; Codex does
+  not, so there the cap counts agent runs only. The producer's own tokens are not
+  counted.
 
 ## Developing the studio
 

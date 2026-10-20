@@ -78,6 +78,34 @@ class BoardTest(unittest.TestCase):
         self.assertIn("in progress (FIX)", text)
         self.assertEqual(self.next_items(), [])
 
+    def test_batch_groups_ready_items_by_role_and_mode(self):
+        first = self.new("--owner", "artist", "--mode", "WORK", "--title", "Ship", "--reviewers", "art-director")
+        second = self.new("--owner", "artist", "--mode", "WORK", "--title", "Asteroid", "--reviewers", "art-director")
+        self.new("--owner", "architect", "--mode", "PLAN", "--title", "Plan")
+
+        groups = json.loads(self.board("next", "--batch", "--json").stdout)
+        self.assertEqual([(group["kind"], group["role"], group["mode"], group["ids"]) for group in groups],
+                         [("RUN", "architect", "PLAN", ["T-003"]), ("RUN", "artist", "WORK", [first, second])])
+
+        self.board("start", f"{first},{second}")
+        self.board("finish", first, second)
+        groups = json.loads(self.board("next", "--batch", "--json").stdout)
+        self.assertIn(("REVIEW", "art-director", "REVIEW", [first, second]),
+                      [(group["kind"], group["role"], group["mode"], group["ids"]) for group in groups])
+
+    def test_batched_review_file_becomes_fix_context(self):
+        task_id = self.new("--owner", "artist", "--mode", "WORK", "--title", "Ship", "--reviewers", "art-director")
+        self.board("start", task_id)
+        self.board("finish", task_id)
+        review = self.project / "Studio" / "reviews" / "art" / "S1-W2.md"
+        review.parent.mkdir(parents=True)
+        review.write_text("T-001: R-1 🟡 darker outline\n", encoding="utf-8")
+
+        self.board("review", task_id, "art-director", "changes", "--file", "Studio/reviews/art/S1-W2.md")
+
+        [item] = self.next_items()
+        self.assertEqual((item["mode"], item["context"]), ("FIX", ["Studio/reviews/art/S1-W2.md"]))
+
     def test_all_reviewers_must_approve(self):
         task_id = self.new("--owner", "developer", "--mode", "WORK", "--title", "Movement",
                            "--reviewers", "architect,qa")

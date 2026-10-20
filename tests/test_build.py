@@ -36,7 +36,7 @@ class BuildTest(unittest.TestCase):
                 agent = tomllib.load(file)
             self.assertEqual(agent["name"], f"studio-{role}")
             self.assertTrue(agent["description"])
-            self.assertIn(agent["model_reasoning_effort"], {"high", "medium"})
+            self.assertEqual(agent["model_reasoning_effort"], "medium")
             self.assertIn("## Common role rules", agent["developer_instructions"])
 
     def test_protocol_lists_every_role(self):
