@@ -83,7 +83,7 @@ The full contract is [`protocol.md`](plugins/game-studio/skills/game-studio/refe
 ### Claude Code
 
 ```
-/plugin marketplace add lireirelico/indie-game-studio
+/plugin marketplace add indie-game-studio-ai/indie-game-studio
 /plugin install game-studio@indie-game-studio
 ```
 
@@ -92,7 +92,7 @@ Run it inside the game folder: `/game-studio:game-studio <game idea>`.
 ### Codex
 
 ```sh
-git clone https://github.com/lireirelico/indie-game-studio.git ~/indie-game-studio
+git clone https://github.com/indie-game-studio-ai/indie-game-studio.git ~/indie-game-studio
 ~/indie-game-studio/scripts/install-codex.sh --user            # for all projects
 # or
 ~/indie-game-studio/scripts/install-codex.sh --project ~/my-game

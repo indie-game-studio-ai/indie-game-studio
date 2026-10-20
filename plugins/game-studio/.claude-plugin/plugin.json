@@ -5,7 +5,7 @@
   "author": {
     "name": "lireirelico"
   },
-  "repository": "https://github.com/lireirelico/indie-game-studio",
+  "repository": "https://github.com/indie-game-studio-ai/indie-game-studio",
   "license": "MIT",
   "keywords": ["gamedev", "subagents", "godot", "unity", "phaser", "pixel-art", "codex"]
 }
