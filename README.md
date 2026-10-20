@@ -74,8 +74,6 @@ The full contract is [`protocol.md`](plugins/game-studio/skills/game-studio/refe
 
 ## Installation
 
-The repository is private. You need git access to it, for example via `gh auth login`.
-
 ### Claude Code
 
 ```
@@ -88,7 +86,7 @@ Run it inside the game folder: `/game-studio:game-studio <game idea>`.
 ### Codex
 
 ```sh
-git clone git@github.com:lireirelico/indie-game-studio.git ~/indie-game-studio
+git clone https://github.com/lireirelico/indie-game-studio.git ~/indie-game-studio
 ~/indie-game-studio/scripts/install-codex.sh --user            # for all projects
 # or
 ~/indie-game-studio/scripts/install-codex.sh --project ~/my-game
