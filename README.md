@@ -1,5 +1,7 @@
 # Indie Game Studio
 
+<p align="center"><img src="docs/images/hero.jpg" alt="A night-time pixel-art game studio staffed by small robots: one paints a sprite, one composes chiptune, one reviews a kanban board, a producer robot holds a clipboard" width="100%"></p>
+
 A skill for **Claude Code** and **Codex** that runs a team of subagents organized like an
 indie studio. The team builds a game in sprints until the features are done.
 
@@ -13,6 +15,8 @@ calls you at kickoff and after every sprint.
 The studio works in **your language**. The producer detects it from your first message
 and stores it in `Studio/studio.json → language`. Every document, report, review and
 gate summary is written in that language. Prompts, templates and tools are in English.
+
+<p align="center"><img src="docs/images/pipeline.jpg" alt="A conveyor belt carrying an idea through spec, art, code and QA to a shipped trophy" width="100%"></p>
 
 ```mermaid
 flowchart TD
@@ -34,6 +38,8 @@ flowchart TD
 ```
 
 ## The team
+
+<p align="center"><img src="docs/images/team.jpg" alt="The ten studio roles as small characters: producer, game designer, artist, art director, architect, developer, QA, sound, narrative, levels" width="100%"></p>
 
 | Role | Does | Checked by |
 |---|---|---|
