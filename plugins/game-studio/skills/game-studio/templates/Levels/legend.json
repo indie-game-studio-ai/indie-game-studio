@@ -1,0 +1,13 @@
+{
+  "tile_size": 16,
+  "tiles": {
+    "#": {"name": "wall", "solid": true, "color": "#333c57"},
+    ".": {"name": "floor", "solid": false, "color": "#94b0c2"},
+    "~": {"name": "water", "solid": true, "color": "#3b5dc9"},
+    "P": {"name": "spawn", "solid": false, "color": "#38b764", "marker": "spawn"},
+    "E": {"name": "exit", "solid": false, "color": "#ffcd75", "marker": "exit"},
+    "*": {"name": "gem", "solid": false, "color": "#41a6f6", "marker": "pickup"},
+    "M": {"name": "enemy", "solid": false, "color": "#b13e53", "marker": "enemy"}
+  },
+  "required_markers": {"spawn": "1", "exit": "1+"}
+}

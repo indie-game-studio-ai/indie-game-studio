@@ -1,0 +1,6 @@
+# Example: a two-bar 4/4 loop. Note: <name><octave>/<division>, a dot = x1.5, R = rest, x = noise hit.
+bpm: 140
+loop: true
+track lead square vol=0.35 duty=0.25 env=pluck: E5/8 G5/8 B5/8 G5/8 E5/8 D5/8 B4/4 | C5/8 E5/8 G5/8 E5/8 D5/4 R/4
+track bass triangle vol=0.5 env=sustain: E3/4 E3/4 B2/4 B2/4 | C3/4 C3/4 D3/4 D3/4
+track drums noise vol=0.25: x/8 R/8 x/8 R/8 x/8 R/8 x/8 R/8 | x/8 R/8 x/8 R/8 x/8 x/8 x/8 R/8

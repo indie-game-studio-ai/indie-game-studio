@@ -1,0 +1,9 @@
+{
+  "ui.menu.start": "Start",
+  "ui.menu.quit": "Quit",
+  "dlg.intro.n1": "Pilot, do you copy?",
+  "dlg.intro.n2": "Copy. Are we flying?",
+  "dlg.intro.yes": "Let's fly",
+  "dlg.intro.no": "One more minute",
+  "dlg.intro.n3": "Buckle up."
+}

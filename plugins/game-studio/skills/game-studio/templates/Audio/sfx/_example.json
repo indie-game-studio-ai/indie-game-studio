@@ -1,0 +1,7 @@
+{
+  "sounds": {
+    "shoot": {"preset": "laser", "freq": 1600, "duration": 0.18},
+    "pickup": {"preset": "coin"},
+    "boom": {"preset": "explosion", "duration": 0.5}
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "indie-game-studio",
+  "owner": {
+    "name": "lireirelico"
+  },
+  "metadata": {
+    "description": "An indie game studio of subagents: producer, game designer, artist, art director, architect, developer, QA, sound, narrative and level design.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "game-studio",
+      "source": "./plugins/game-studio",
+      "description": "The game-studio skill: a team of subagents builds a game in sprints until the features are done, with a grill-me interview at kickoff and gates after every sprint.",
+      "version": "0.1.0",
+      "category": "development"
+    }
+  ]
+}

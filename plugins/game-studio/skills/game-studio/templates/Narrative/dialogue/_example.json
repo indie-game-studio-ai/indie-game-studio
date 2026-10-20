@@ -1,0 +1,16 @@
+{
+  "id": "intro",
+  "start": "n1",
+  "nodes": {
+    "n1": { "speaker": "captain", "text_key": "dlg.intro.n1", "next": "n2" },
+    "n2": {
+      "speaker": "pilot",
+      "text_key": "dlg.intro.n2",
+      "choices": [
+        { "text_key": "dlg.intro.yes", "next": "n3" },
+        { "text_key": "dlg.intro.no", "next": null }
+      ]
+    },
+    "n3": { "speaker": "captain", "text_key": "dlg.intro.n3", "next": null }
+  }
+}

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Grill Me"
+  short_description: "Round-based interview to a shared understanding of a plan"
+policy:
+  allow_implicit_invocation: true

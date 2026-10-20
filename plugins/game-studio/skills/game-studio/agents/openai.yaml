@@ -1,0 +1,5 @@
+interface:
+  display_name: "Game Studio"
+  short_description: "An indie studio of subagents builds your game in sprints"
+policy:
+  allow_implicit_invocation: true

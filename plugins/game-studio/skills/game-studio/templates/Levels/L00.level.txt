@@ -1,0 +1,8 @@
+; title: Example room with an exit
+; mode: topdown
+##########
+#P...#..E#
+#.##.#.###
+#..*.....#
+#~~~.##M.#
+##########

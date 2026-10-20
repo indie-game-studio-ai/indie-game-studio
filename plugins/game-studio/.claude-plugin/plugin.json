@@ -1,0 +1,11 @@
+{
+  "name": "game-studio",
+  "version": "0.1.0",
+  "description": "An indie game studio of subagents: the producer runs sprints while roles meet and hand work over through a shared task board until the game's features are done.",
+  "author": {
+    "name": "lireirelico"
+  },
+  "repository": "https://github.com/lireirelico/indie-game-studio",
+  "license": "MIT",
+  "keywords": ["gamedev", "subagents", "godot", "unity", "phaser", "pixel-art", "codex"]
+}

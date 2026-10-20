@@ -1,0 +1,55 @@
+{
+  "name": "ship",
+  "size": [16, 16],
+  "palette": {
+    ".": null,
+    "k": "#1a1c2c",
+    "b": "#3b5dc9",
+    "c": "#41a6f6",
+    "w": "#f4f4f4",
+    "o": "#ef7d57",
+    "y": "#ffcd75"
+  },
+  "frames": {
+    "thrust_0": [
+      ".......kk.......",
+      "......kwwk......",
+      "......kcck......",
+      ".....kbccbk.....",
+      ".....kbccbk.....",
+      "....kbbccbbk....",
+      "....kbbwwbbk....",
+      "...kbbbccbbbk...",
+      "..kbbbbccbbbbk..",
+      ".kbbkbbbbbbkbbk.",
+      ".kbk.kbbbbk.kbk.",
+      ".kk..kkkkkk..kk.",
+      "......oyyo......",
+      ".......yy.......",
+      "................",
+      "................"
+    ],
+    "thrust_1": [
+      ".......kk.......",
+      "......kwwk......",
+      "......kcck......",
+      ".....kbccbk.....",
+      ".....kbccbk.....",
+      "....kbbccbbk....",
+      "....kbbwwbbk....",
+      "...kbbbccbbbk...",
+      "..kbbbbccbbbbk..",
+      ".kbbkbbbbbbkbbk.",
+      ".kbk.kbbbbk.kbk.",
+      ".kk..kkkkkk..kk.",
+      "......oyyo......",
+      "......oyyo......",
+      ".......oo.......",
+      "................"
+    ]
+  },
+  "animations": {
+    "thrust": {"frames": ["thrust_0", "thrust_1"], "fps": 8, "loop": true}
+  },
+  "origin": [8, 8]
+}

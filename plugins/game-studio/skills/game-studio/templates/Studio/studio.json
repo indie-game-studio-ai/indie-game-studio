@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "game": "",
+  "stack": "",
+  "language": "",
+  "paths": {
+    "art_export": "Art/export",
+    "audio_export": "Audio/export",
+    "levels_export": "Levels/export",
+    "strings_export": "Narrative/strings",
+    "code": [
+      "src/**"
+    ],
+    "unit_tests": [
+      "tests/unit/**"
+    ],
+    "acceptance_tests": [
+      "tests/acceptance/**"
+    ],
+    "project_files": []
+  },
+  "commands": {
+    "setup": "",
+    "run": "",
+    "build": "",
+    "test": "",
+    "acceptance": "",
+    "capture": "",
+    "import_assets": ""
+  },
+  "zones": {
+    "game-designer": [
+      "Design/**"
+    ],
+    "art-director": [
+      "References/Art Bible.md",
+      "References/palette.json",
+      "Studio/reviews/art/**"
+    ],
+    "architect": [
+      "Tech/**",
+      "Studio/reviews/code/**",
+      "Studio/studio.json"
+    ],
+    "artist": [
+      "Art/**",
+      "References/Art TODO.md",
+      "References/mockups/**",
+      "${paths.art_export}/**"
+    ],
+    "developer": [
+      "${paths.code}",
+      "${paths.unit_tests}",
+      "${paths.project_files}"
+    ],
+    "qa": [
+      "QA/**",
+      "${paths.acceptance_tests}"
+    ],
+    "sound-designer": [
+      "Audio/**",
+      "References/Audio TODO.md",
+      "${paths.audio_export}/**"
+    ],
+    "narrative-designer": [
+      "Narrative/**",
+      "${paths.strings_export}/**"
+    ],
+    "level-designer": [
+      "Levels/**",
+      "${paths.levels_export}/**"
+    ]
+  },
+  "shared_zones": [
+    "Studio/reports/**/*.{role}.md",
+    "Studio/meetings/**/{role}.md",
+    "Studio/kickoff/*.{role}.md",
+    "**/*.import",
+    "**/*.uid",
+    "**/*.meta"
+  ],
+  "producer_zones": [
+    "Studio/tasks/**",
+    "Studio/BOARD.md",
+    "Studio/ledger.md",
+    "Studio/decisions.md",
+    "Studio/questions.md",
+    "Studio/proposals.md",
+    "Studio/kickoff/idea.md",
+    "Studio/meetings/**/minutes.md",
+    "Studio/reports/**/retro.md",
+    "Studio/reports/**/*.png",
+    "Studio/.state/**"
+  ],
+  "ignore": [
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    ".vite",
+    ".godot",
+    ".import",
+    "Library",
+    "Temp",
+    "Obj",
+    "Logs",
+    "UserSettings",
+    "Build",
+    "Builds",
+    "__pycache__",
+    ".DS_Store"
+  ],
+  "limits": {
+    "parallel_agents": 4,
+    "features_per_sprint": 2,
+    "rework_cycles": 3,
+    "max_sprints": 5
+  },
+  "git": {
+    "auto_commit": false
+  },
+  "autopilot": false
+}

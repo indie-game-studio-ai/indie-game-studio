@@ -1,0 +1,21 @@
+{
+  "name": "studio-default",
+  "colors": {
+    "ink": "#141418",
+    "night": "#262b3a",
+    "slate": "#40485e",
+    "stone": "#6b7488",
+    "mist": "#a4acbd",
+    "paper": "#eceef2",
+    "ember": "#b8433a",
+    "rust": "#d9734a",
+    "sand": "#e8b96a",
+    "lemon": "#f3e08a",
+    "moss": "#4f7a45",
+    "leaf": "#86b25c",
+    "teal": "#2f7f86",
+    "sky": "#6cb3d9",
+    "plum": "#6a3f73",
+    "rose": "#d58aa6"
+  }
+}
