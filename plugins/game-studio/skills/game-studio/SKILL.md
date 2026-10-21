@@ -36,12 +36,16 @@ in Codex.
 
 | Action | Claude Code | Codex |
 |---|---|---|
-| Launch a role | `Agent(subagent_type: "game-studio:<role>", model: <model>, effort: <effort>, description, prompt)` | `spawn_agent` with agent `studio-<role>`, `reasoning_effort: <effort>`, the prompt as its message |
-| Parallel wave | several `Agent` calls in one message, then wait for all notifications | several `spawn_agent` calls, then `wait_agent` on all of them |
-| Continue an agent | `SendMessage(to: <id>)`; it is a deferred tool, load it with `ToolSearch("select:SendMessage")` | `send_input` to the same agent |
+| Launch a role | `Agent(subagent_type: "game-studio:<role>", model: <model>, effort: <effort>, description, prompt)` | `spawn_agent(agent_type: "studio-<role>", task_name: <name>, fork_turns: "none", reasoning_effort: <effort>, message: <prompt>)`; `<name>` is the one `waves.py start` prints. Without `task_name` (older Codex): `agent_type`, `reasoning_effort`, `message`, and never `fork_context: true` |
+| Parallel wave | several `Agent` calls in one message, then wait for all notifications | several `spawn_agent` calls, then `wait_agent` until all of them are done |
+| Continue an agent | `SendMessage(to: <id>)`; it is a deferred tool, load it with `ToolSearch("select:SendMessage")` | `followup_task(target: <id>, message: <prompt>)`; in older Codex `send_input` |
 | Ask the user | write the round as text and end your turn; up to 4 closed questions may use `AskUserQuestion` | write the round as text and end your turn |
-| Agent id for `waves.py finish` | `agentId` in the `Agent` result; the spend is read from its transcript | the id `spawn_agent` returns; tokens are not reported |
+| Agent id for `waves.py finish` | `agentId` in the `Agent` result | not needed for agents spawned with the printed name; in older Codex the id `spawn_agent` returns |
 | `SKILL_DIR` | `${CLAUDE_SKILL_DIR}` | the folder you read this SKILL.md from (`realpath`) |
+
+`fork_turns: "none"` matters: by default a Codex agent starts with your whole
+conversation, which it does not need and pays for on every request. `waves.py finish`
+reads every run's spend from the transcripts on both platforms.
 
 `waves.py start` prints the model and effort of every run. For a run outside a wave
 take them from `python3 Studio/tools/budget.py route <role> <mode>`, which prints
@@ -69,6 +73,8 @@ one of your tool calls re-sends. Your part:
    prompts. `waves.py finish` does all the bookkeeping. Do not run those steps by hand.
 4. **Reuse only when it is cheaper.** Continue an agent only when `waves.py start` says
    `continue agent <id>`; give it only the new header. Otherwise launch a new one.
+   `waves.py` continues a large agent only while its prompt cache is still warm; after
+   that a fresh agent with a pack costs less.
 5. **Tests at the end.** Full test runs, the build and the screenshots happen in qa
    VERIFY; with `verify: sprint-end`, that is once per sprint for all features.
 6. **Keep your own context small.**
@@ -252,12 +258,14 @@ Repeat while there is ready work:
 1. `python3 Studio/tools/waves.py start`. It prints one block per run: the role, mode,
    tasks, model, effort, whether to continue an agent, and the prompt. `OVER BUDGET`
    means an early gate. `No ready tasks` means the sprint is over or blocked.
-2. Launch every run of the block in one message with its model and effort; a run marked
-   `continue agent <id>` goes through `SendMessage`/`send_input` with its prompt. Wait
-   for all of them.
+2. Launch every run of the block in one message with its model and effort, as soon as
+   `start` prints them: a continued agent's cache stays warm only for a few minutes. A
+   run marked `continue agent <id>` goes through `SendMessage`/`followup_task` with its
+   prompt. Wait for all of them.
 3. `python3 Studio/tools/waves.py finish --agent <role>=<agent id> …`, one `--agent`
-   per run. It reads the summaries, moves the board, creates new tasks and proposals,
-   logs the spend, verifies the zones and the test lock and updates the ledger.
+   per new agent, as the last line of `start` shows. It reads the summaries, moves the
+   board, creates new tasks and proposals, logs the spend, verifies the zones and the
+   test lock and updates the ledger.
 4. Act only on what it lists under "Needs you":
    - `NEEDS_INPUT`: the task is blocked and the question is in `questions.md`. Ask the
      user now if it blocks a feature; in `autopilot` take the recommendation, record it
@@ -282,8 +290,8 @@ reverted, the rework limit is exhausted or the budget cap is reached.
    artist picks its findings up into Art TODO at the next planning.
 2. Build `Studio/reports/S<n>/sheet.png` from the screenshots and the new art.
 3. Write `Studio/reports/S<n>/retro.md` yourself: 2–5 points on what got in the way,
-   what to change, and where the tokens went (`budget.py report`; in Claude Code also
-   `tokens.py report --top 5` for the start prefix share and files read more than
+   what to change, and where the tokens went (`budget.py report` and `tokens.py report
+   --top 5` for the start prefix share, cold-cache requests and files read more than
    once). It goes into the next planning's `CONTEXT`.
 
 ## Step 4. Sprint GATE

@@ -27,7 +27,10 @@ This repository is the studio plugin, not a game. `CLAUDE.md` is a symlink to th
    `python3 -m unittest discover -s tests -t .`.
 5. A change to agent frontmatter or to what agents read at start: run
    `python3 scripts/probe_overhead.py` (a few cents of real tokens) and compare the
-   start size with the one in `scripts/build.py`.
+   start size with the one in `scripts/build.py`. For a Codex role: a short `codex exec`
+   that spawns it with `fork_turns: "none"` (an untrusted folder takes the role as
+   `-c agents.<name>.config_file=… -c agents.<name>.description=…`), then
+   `tokens.py --project <dir> report`.
 
 ## Style
 

@@ -116,3 +116,11 @@ A tool reads the summary and moves the board, so keep the labels and the
 `<owner>/<MODE>: <title>` form exact. Your final answer is one line:
 `<STATUS, or T-007: DONE; T-008: …> — <REPORT>`.
 '''
+
+[features]
+apps = false
+plugins = false
+memories = false
+
+[skills]
+include_instructions = false

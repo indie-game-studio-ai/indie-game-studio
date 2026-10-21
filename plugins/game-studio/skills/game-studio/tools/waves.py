@@ -37,6 +37,8 @@ FINISHED = ("DONE", "DONE_WITH_CONCERNS")
 VERDICT_MODES = ("VERIFY", "ACCEPT")
 REVIEW_FOLDERS = {"art-director": "art", "architect": "code"}
 LOCK_NAME = "acceptance"
+# Time the producer needs between `start` and the continued agent's first request.
+CACHE_MARGIN = 60
 
 
 class WaveError(Exception):
@@ -173,7 +175,17 @@ def block_over_limit(board, sprint, rework_limit):
     return blocked
 
 
-def reusable_agent(agents, group, sprint, model, escalated, budget):
+def agent_name(sprint, wave, role):
+    """Codex task name: lowercase letters, digits and underscores."""
+    return f"s{sprint}_w{wave}_{role.replace('-', '_')}"
+
+
+def cache_warm(previous, now):
+    last, ttl = previous.get("last_at"), previous.get("ttl")
+    return bool(last and ttl) and now < last + ttl - CACHE_MARGIN
+
+
+def reusable_agent(agents, group, sprint, model, escalated, budget, now):
     previous = agents.get(group["role"])
     if escalated or not previous or previous.get("sprint") != sprint or previous.get("model") != model:
         return None
@@ -181,6 +193,10 @@ def reusable_agent(agents, group, sprint, model, escalated, budget):
         return None
     context = previous.get("context")
     if context is None or context > budget.get("reuse_max_context", 40000):
+        return None
+    # Once the cache has expired, a continued agent writes its whole context again at
+    # 1.25×; past a small context a fresh agent with a pack costs less.
+    if not cache_warm(previous, now) and context > budget.get("reuse_cold_max_context", 15000):
         return None
     return previous
 
@@ -204,15 +220,18 @@ def prompt(run, project, config, sprint):
 def print_runs(state, project, config):
     for number, run in enumerate(state["runs"], start=1):
         how = (
-            f"continue agent {run['continue']} (context {short(run['continue_context'])})"
-            if run.get("continue") else "new agent"
+            f"continue agent {run['continue']} (context {short(run['continue_context'])}, "
+            f"cache {'warm' if run.get('warm') else 'cold'})"
+            if run.get("continue") else f"new agent {run['name']}" if run.get("name") else "new agent"
         )
         escalated = " · escalated" if run.get("escalated") else ""
         print(f"\n### {number}. {run['role']} {run['mode']} {','.join(run['ids'])} — "
               f"model={run['model']} effort={run['effort']} — {how}{escalated}")
         print(prompt(run, project, config, state["sprint"]))
-    roles = " ".join(f"{run['role']}=<agent id>" for run in state["runs"])
-    print(f"\nLaunch them in one message, wait for all, then: python3 Studio/tools/waves.py finish --agent {roles}")
+    roles = " ".join(f"{run['role']}=<agent id>" for run in state["runs"] if not run.get("continue"))
+    print("\nLaunch them in one message, wait for all, then: python3 Studio/tools/waves.py finish"
+          + (f" --agent {roles}" if roles else "")
+          + "\n(Codex agents spawned with these names and continued agents need no --agent.)")
 
 
 def command_start(project, args):
@@ -250,6 +269,7 @@ def command_start(project, args):
     files = zoneslib.take_snapshot(zoneslib.Zones(project), label)
     agents = load_json(project, "agents.json", {})
     profile = budget.get("profile", "standard")
+    now = time.time()
     runs = []
     started = []
     for group in groups:
@@ -263,7 +283,7 @@ def command_start(project, args):
             boardlib.build_pack(board, group["ids"], group["role"], group["mode"], group["context"]),
             encoding="utf-8",
         )
-        previous = reusable_agent(agents, group, sprint, model, escalated, budget)
+        previous = reusable_agent(agents, group, sprint, model, escalated, budget, now)
         if group["kind"] == "RUN":
             for task in tasks.values():
                 boardlib.change_status(task, "doing", f", in progress ({group['mode']})")
@@ -273,8 +293,10 @@ def command_start(project, args):
             "kind": group["kind"], "role": group["role"], "mode": group["mode"], "ids": group["ids"],
             "context": group["context"], "report": report_path(group, sprint, wave, tasks), "pack": pack,
             "model": model, "effort": effort, "escalated": escalated,
+            "name": agent_name(sprint, wave, group["role"]),
             "continue": previous["agent"] if previous else None,
             "continue_context": previous.get("context") if previous else None,
+            "warm": cache_warm(previous, now) if previous else False,
         })
 
     state.update({
@@ -314,28 +336,36 @@ def parse_agents(values):
     return result
 
 
-def run_spend(project, agents, role, agent_id, given_context):
-    """(tokens of this run, final context, cumulative weighted). A continued agent's
-    transcript holds its earlier runs too, so the run is the difference."""
-    if not agent_id:
-        return None, given_context, None
+def run_spend(project, agents, role, agent_id):
+    """(tokens of this run, the agent's spend so far), or (None, None) without a
+    transcript. A continued agent's transcript holds its earlier runs too, so the run is
+    the difference."""
     spend = tokenslib.agent_spend(project, agent_id)
     if spend is None:
-        return None, given_context, None
+        return None, None
     previous = agents.get(role, {})
     before = previous.get("weighted", 0) if previous.get("agent") == agent_id else 0
-    return spend["weighted"] - before, spend["final_context"], spend["weighted"]
+    return spend["weighted"] - before, spend
+
+
+def default_agent(project, run):
+    """A continued agent keeps its id; a Codex agent is found by the name it was spawned with."""
+    if run.get("continue"):
+        return run["continue"]
+    if run.get("name") and tokenslib.find_codex_thread(project, run["name"]):
+        return run["name"]
+    return ""
 
 
 def producer_spend(project, state):
-    try:
-        session = tokenslib.latest_session(project)
-    except tokenslib.TokensError:
+    producer = tokenslib.producer_run(project)
+    if producer is None:
         return None
-    weighted = tokenslib.Run(session).metrics()["weighted"]
+    name, run = producer
+    weighted = run.metrics()["weighted"]
     mark = state.get("producer_mark", {})
-    state["producer_mark"] = {session.stem: weighted}
-    return weighted - mark.get(session.stem, 0)
+    state["producer_mark"] = {name: weighted}
+    return weighted - mark.get(name, 0)
 
 
 def reopen(task, reason):
@@ -499,20 +529,24 @@ def log_spend(project, studio, agents, run, agent_ids, sprint, digest):
     """Logs a run once, and again for what a continued agent spent on top (for example
     when it was asked for a missing summary). Returns the tokens logged now."""
     agent_id, given_context = agent_ids.get(run["role"], ("", None))
+    agent_id = agent_id or default_agent(project, run)
     if not agent_id:
         if not run.get("logged"):
             budgetlib.log_run(studio, run["role"], run["mode"], run["ids"], None, run["model"], "", sprint)
             digest["needs"].append(f"{run['role']}: no --agent id, its spend is not counted")
             run["logged"] = True
         return 0
-    tokens, context, cumulative = run_spend(project, agents, run["role"], agent_id, given_context)
+    tokens, spend = run_spend(project, agents, run["role"], agent_id)
     if not run.get("logged") or (tokens or 0) > 0:
         budgetlib.log_run(studio, run["role"], run["mode"], run["ids"], tokens, run["model"], agent_id, sprint)
         run["logged"] = True
     previous = agents.get(run["role"], {})
     agents[run["role"]] = {
-        "agent": agent_id, "model": run["model"], "sprint": sprint, "context": context,
-        "weighted": cumulative if cumulative is not None else previous.get("weighted"),
+        "agent": agent_id, "model": run["model"], "sprint": sprint,
+        "context": spend["final_context"] if spend else given_context,
+        "weighted": spend["weighted"] if spend else previous.get("weighted"),
+        "last_at": spend["last_at"] if spend else None,
+        "ttl": spend["ttl"] if spend else None,
     }
     return tokens or 0
 

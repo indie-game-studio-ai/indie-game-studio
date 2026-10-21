@@ -3,6 +3,7 @@ name: qa
 description: QA of the game-studio team. Writes acceptance tests from the AC and the contract before the code exists and proves they fail. Verifies features (tests, build, screenshots, sound, levels) and files bugs. Called only from the game-studio skill.
 model: sonnet
 effort: medium
+omitClaudeMd: true
 color: yellow
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---

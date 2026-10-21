@@ -31,6 +31,23 @@ def write_jsonl(path, records):
     path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
 
 
+def write_rollout(codex_home, meta, responses, stamp="2026-10-21T10:00:00.000Z"):
+    """A Codex rollout: session_meta, then a token_usage_record and a token_count event per
+    response (input, cached, output). Codex may write a record twice."""
+    records = [{"timestamp": stamp, "type": "session_meta", "payload": meta},
+               {"timestamp": stamp, "type": "turn_context", "payload": {"model": "gpt-6.1"}}]
+    total = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+    for index, (input_tokens, cached, output) in enumerate(responses):
+        usage = {"input_tokens": input_tokens, "cached_input_tokens": cached, "cache_write_input_tokens": 0,
+                 "output_tokens": output, "reasoning_output_tokens": 0, "total_tokens": input_tokens + output}
+        record = {"timestamp": stamp, "type": "token_usage_record",
+                  "payload": {"thread_id": meta["id"], "response_id": f"resp_{meta['id']}_{index}", "usage": usage}}
+        total = {key: total[key] + usage[key] for key in total}
+        records += [record, record, {"timestamp": stamp, "type": "event_msg",
+                                     "payload": {"type": "token_count", "info": {"total_token_usage": total}}}]
+    write_jsonl(codex_home / "sessions" / "2026" / "10" / "21" / f"rollout-2026-10-21T10-00-00-{meta['id']}.jsonl", records)
+
+
 class TokensTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -38,15 +55,18 @@ class TokensTest(unittest.TestCase):
         self.project = base / "game"
         self.project.mkdir()
         self.config_dir = base / "claude"
-        self.previous = os.environ.get("CLAUDE_CONFIG_DIR")
+        self.codex_home = base / "codex"
+        self.previous = {name: os.environ.get(name) for name in ("CLAUDE_CONFIG_DIR", "CODEX_HOME")}
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.config_dir)
+        os.environ["CODEX_HOME"] = str(self.codex_home)
         self.folder = self.config_dir / "projects" / tokens.project_slug(self.project.resolve())
 
     def tearDown(self):
-        if self.previous is None:
-            os.environ.pop("CLAUDE_CONFIG_DIR", None)
-        else:
-            os.environ["CLAUDE_CONFIG_DIR"] = self.previous
+        for name, value in self.previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         self.temp.cleanup()
 
     def write_session(self):
@@ -107,6 +127,47 @@ class TokensTest(unittest.TestCase):
     def test_no_session_is_an_error(self):
         with self.assertRaises(tokens.TokensError):
             tokens.latest_session(self.project)
+        with self.assertRaises(tokens.TokensError):
+            tokens.session_runs(self.project)
+
+    def test_a_cold_request_and_the_cache_lifetime(self):
+        write_jsonl(self.folder / "s1.jsonl", [
+            dict(assistant("m1", usage(write=10000), []), timestamp="2026-10-21T10:00:00.000Z"),
+            dict(assistant("m2", usage(read=10000, write=500), []), timestamp="2026-10-21T10:00:30.000Z"),
+            # Continued after the cache expired: the whole context is written again.
+            dict(assistant("m3", usage(read=3000, write=8000), []), timestamp="2026-10-21T10:20:00.000Z"),
+        ])
+        metrics = tokens.Run(self.folder / "s1.jsonl").metrics()
+        self.assertEqual(metrics["cold"], 1)
+        self.assertEqual(metrics["ttl"], tokens.CACHE_TTL_5M)
+        self.assertEqual(metrics["last_at"], tokens.parse_time("2026-10-21T10:20:00Z"))
+        write_jsonl(self.folder / "s2.jsonl", [assistant("m1", usage(write=1000, write_1h=1000), [])])
+        self.assertEqual(tokens.Run(self.folder / "s2.jsonl").metrics()["ttl"], tokens.CACHE_TTL_1H)
+
+    def test_codex_session_producer_and_agents(self):
+        cwd = str(self.project.resolve())
+        write_rollout(self.codex_home, {"id": "root", "session_id": "root", "cwd": cwd, "thread_source": "user"},
+                      [(20000, 0, 50), (21000, 20000, 50)])
+        write_rollout(self.codex_home, {
+            "id": "child", "session_id": "root", "parent_thread_id": "root", "cwd": cwd, "thread_source": "subagent",
+            "agent_role": "studio-artist", "agent_path": "/root/s1_w1_artist",
+        }, [(20000, 15000, 100)])
+        write_rollout(self.codex_home, {"id": "elsewhere", "session_id": "elsewhere", "cwd": "/other"}, [(1, 0, 1)])
+
+        name, runs = tokens.session_runs(self.project)
+        self.assertEqual(name, "root")
+        summary = tokens.summarize(self.project, runs)
+        producer, artist = summary["runs"]
+        # Each response counts once, though its record is written twice.
+        self.assertEqual((producer["requests"], producer["weighted"]), (2, 20000 + 250 + 1000 + 2000 + 250))
+        self.assertEqual((artist["label"], artist["start"]), ("artist s1_w1_artist", 20000))
+        self.assertEqual(artist["weighted"], 5000 + 1500 + 500)
+        self.assertEqual(artist["model"], "gpt-6.1")
+
+        for agent_id in ("s1_w1_artist", "/root/s1_w1_artist", "child"):
+            self.assertEqual(tokens.agent_spend(self.project, agent_id)["weighted"], 7000)
+        self.assertEqual(tokens.agent_spend(self.project, "child")["ttl"], tokens.CODEX_CACHE_TTL)
+        self.assertEqual(tokens.producer_run(self.project)[0], "root")
 
 
 if __name__ == "__main__":

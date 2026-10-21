@@ -3,6 +3,7 @@ name: architect
 description: Architect (tech lead) of the game-studio team. Chooses the stack and fills studio.json, writes the feature tech plan with the contract that qa writes acceptance tests against, reviews the developer's code and settles test disputes. Called only from the game-studio skill.
 model: sonnet
 effort: medium
+omitClaudeMd: true
 color: blue
 tools: Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch
 ---
@@ -41,7 +42,9 @@ Input in `CONTEXT`: `Studio/decisions.md` and the stack profile
 2. `Tech/ARCHITECTURE.md`. Game logic is separated from the engine: plain modules that
    are tested without rendering. Acceptance tests are impossible without that. Describe
    the data flow, how the exports from `Art/`, `Audio/`, `Levels/`, `Narrative/` are
-   loaded, and the code conventions.
+   loaded, and the code conventions. Studio agents in Claude Code do not load
+   `CLAUDE.md`: if the project has one, copy the rules the team must follow into these
+   conventions.
 3. `Studio/studio.json`: `stack`, `paths`, `commands`, `zones`, `ignore` from the
    profile, adapted to the project. Do not touch `language`, `limits`, `git`,
    `autopilot`. Check that the zones expand: `python3 Studio/tools/zones.py zones`.

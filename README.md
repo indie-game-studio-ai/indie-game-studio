@@ -140,15 +140,18 @@ inherits the session's tools also inherits the list of all your skills and MCP t
 re-sends it with every request (42–83% of agent input), and the producer re-sends its
 whole context with every bookkeeping call (32–72% of a session). So:
 
-- **Lean agents.** Every agent has an explicit tool list and medium effort. A probe run
-  starts at 7.6K tokens instead of 21.9K with inherited tools
-  (`scripts/probe_overhead.py` measures it).
+- **Lean agents.** Every agent has an explicit tool list and medium effort and skips
+  `CLAUDE.md`. The artist starts at 7.1K tokens instead of 21.9K with inherited tools
+  (`scripts/probe_overhead.py` measures it). In Codex the roles drop the skill list,
+  connectors, plugins and memories (29.7K → 20.3K at start), and the producer spawns
+  them without its own conversation (`fork_turns: "none"`).
 - **Context packs.** `board.py pack` puts a run's tasks, AC, its part of the spec and
   the review findings into one file, so the agent does not spend turns collecting them.
 - **Two calls per wave.** `waves.py start` and `waves.py finish` do the producer's
   bookkeeping; agents answer in one line and leave the summary in their report.
-- **Reuse only when cheaper.** An agent is continued only while its context is small;
-  otherwise a fresh agent with a pack costs less.
+- **Reuse only when cheaper.** An agent is continued only while its context is small
+  and, past 15K, only while its prompt cache is still warm; otherwise a fresh agent with
+  a pack costs less.
 - **Model per mode, not per role.** Agents default to Sonnet with medium effort. Opus
   only for decisions that drive everything else (spec, tech plan, acceptance), Haiku
   for meeting replies and, in lean, for sound, text and levels. `budget.py routes` shows
@@ -210,7 +213,7 @@ Plain Python 3 stdlib, nothing to install. They are copied into `Studio/tools/` 
 | `board.py` | task board: create, import from minutes, statuses, reviews, batches, context packs, BOARD.md |
 | `waves.py` | a wave in two producer calls: start (prompts, packs) and finish (summaries → board) |
 | `budget.py` | budget profiles, model routing, spend per sprint and the cap check |
-| `tokens.py` | real token spend from Claude Code transcripts: producer, each run, repeated reads |
+| `tokens.py` | real token spend from Claude Code and Codex transcripts: producer, each run, cold-cache requests, repeated reads |
 | `quiet.py` | run a command with the full output in a log and only errors on screen |
 | `zones.py` | role write zones, snapshots, test lock, hook |
 | `studio_init.py` | lay out templates and tools in the project |
@@ -222,9 +225,9 @@ Plain Python 3 stdlib, nothing to install. They are copied into `Studio/tools/` 
 - Nobody listens to the sound. It is checked by its parameters and WAV analysis.
 - In Codex, write zones rely on instructions and the `zones.py verify` check after each
   wave. The Codex hook does not know which role is writing.
-- Token counts come from the platform. Claude Code reports them per agent; Codex does
-  not, so there the cap counts agent runs only. The producer's own tokens are not
-  counted.
+- Token counts come from the transcripts each platform writes on disk
+  (`~/.claude/projects`, `~/.codex/sessions`), including the producer's. Codex sessions
+  archived as `.zst` are not read.
 
 ## Developing the studio
 

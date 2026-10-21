@@ -32,10 +32,12 @@ class BuildTest(unittest.TestCase):
             self.assertIn("## Common role rules", claude_agent)
             self.assertTrue((ROOT / "codex" / "agents" / f"studio-{role}.toml").exists())
 
-    def test_only_the_architect_gets_web_tools(self):
+    def test_claude_frontmatter_skips_claude_md_and_gives_web_tools_to_the_architect(self):
         for role in ROLES:
             claude_agent = (ROOT / "plugins" / "game-studio" / "agents" / f"{role}.md").read_text(encoding="utf-8")
-            self.assertEqual("WebSearch" in claude_agent.split("---", 2)[1], role == "architect", role)
+            frontmatter = claude_agent.split("---", 2)[1]
+            self.assertEqual("WebSearch" in frontmatter, role == "architect", role)
+            self.assertIn("omitClaudeMd: true", frontmatter)
 
     @unittest.skipIf(tomllib is None, "tomllib is available from Python 3.11")
     def test_codex_agents_are_valid_toml(self):
@@ -46,6 +48,9 @@ class BuildTest(unittest.TestCase):
             self.assertTrue(agent["description"])
             self.assertEqual(agent["model_reasoning_effort"], "medium")
             self.assertIn("## Common role rules", agent["developer_instructions"])
+            # Codex applies only switches that turn something off; these trim the start.
+            self.assertEqual(agent["features"], {"apps": False, "plugins": False, "memories": False})
+            self.assertEqual(agent["skills"], {"include_instructions": False})
 
     @unittest.skipIf(not hasattr(sys, "stdlib_module_names"), "sys.stdlib_module_names is available from Python 3.10")
     def test_no_tool_shadows_a_standard_module(self):

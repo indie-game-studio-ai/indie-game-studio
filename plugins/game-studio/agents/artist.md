@@ -3,6 +3,7 @@ name: artist
 description: Artist of the game-studio team. Draws screen mockups, pixel-art and SVG sprites, tilesets and UI, and keeps References/Art TODO.md with what to make and redo from mockups and reviews. Hands work to the art director. Called only from the game-studio skill.
 model: sonnet
 effort: medium
+omitClaudeMd: true
 color: pink
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---

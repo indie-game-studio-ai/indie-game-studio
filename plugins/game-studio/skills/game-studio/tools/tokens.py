@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Real token spend of a studio session, read from Claude Code transcripts.
+"""Real token spend of a studio session, read from Claude Code and Codex transcripts.
 
 Claude Code keeps every session in ~/.claude/projects/<project slug>/<session>.jsonl and
 its subagents in <session>/subagents/agent-<id>.jsonl. Each API request records its
 usage there. The figure the Agent tool reports (`subagent_tokens`) is only the size of
 the last request; the spend is the sum over all requests.
 
-"Weighted" tokens are input-equivalent tokens at Claude's price ratios:
-input ×1, cache write ×1.25 (5 min) or ×2 (1 h), cache read ×0.1, output ×5.
+Codex keeps every thread, the producer's and each agent's, in
+~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<thread>.jsonl. The first record names the
+thread's working directory, its root session, its role and its agent path
+(`/root/<task name>`); a `token_usage_record` per response holds the usage.
 
-Input-side figures are exact. A transcript records the usage of a streamed response as
-it starts, so output is taken as the larger of the recorded count and the visible text
-at CHARS_PER_TOKEN; hidden thinking is not counted.
+"Weighted" tokens are input-equivalent tokens at Claude's price ratios:
+input ×1, cache write ×1.25 (5 min) or ×2 (1 h), cache read ×0.1, output ×5. Codex has
+no cache write price, so its uncached input counts ×1 on the same scale.
+
+Input-side figures are exact. A Claude Code transcript records the usage of a streamed
+response as it starts, so output is taken as the larger of the recorded count and the
+visible text at CHARS_PER_TOKEN; hidden thinking is not counted.
 """
 import argparse
 import json
@@ -19,6 +25,7 @@ import os
 import re
 import shlex
 import sys
+from datetime import datetime
 from pathlib import Path
 
 CACHE_WRITE_5M = 1.25
@@ -26,6 +33,14 @@ CACHE_WRITE_1H = 2.0
 CACHE_READ = 0.1
 OUTPUT = 5.0
 CHARS_PER_TOKEN = 3.5
+
+CACHE_TTL_5M = 300
+CACHE_TTL_1H = 3600
+# OpenAI keeps a cached prefix for 5 to 10 idle minutes; take the short end.
+CODEX_CACHE_TTL = 300
+# A later request that reads less than this share of its context from the cache wrote
+# it again: an agent continued after its cache expired, or a pause longer than the TTL.
+COLD_SHARE = 0.5
 
 HEADER_FIELD = re.compile(r"^(ROLE|MODE|TASKS)=(\S+)", re.M)
 READ_COMMANDS = {"cat", "head", "tail", "less", "sed"}
@@ -100,6 +115,20 @@ def context_size(usage):
     )
 
 
+def is_cold(usage):
+    size = context_size(usage)
+    return size > 0 and (usage.get("cache_read_input_tokens") or 0) < COLD_SHARE * size
+
+
+def parse_time(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def text_of(content):
     if isinstance(content, str):
         return content
@@ -167,17 +196,23 @@ class Run:
         self.label = label
         self.agent_type = agent_type
         self.usages = []
+        self.times = []
         self.tools = {}
         self.reads = []
         self.prompt = ""
         self.model = ""
         self.load()
 
+    def cache_ttl(self):
+        split = [usage.get("cache_creation") or {} for usage in self.usages]
+        return CACHE_TTL_1H if any(part.get("ephemeral_1h_input_tokens") for part in split) else CACHE_TTL_5M
+
     def load(self):
         by_id = {}
         recorded_output = {}
         chars = {}
         order = []
+        started = {}
         with open(self.path, encoding="utf-8") as stream:
             for line in stream:
                 if not line.strip():
@@ -199,6 +234,7 @@ class Run:
                 usage = message.get("usage")
                 if usage and key not in by_id:
                     order.append(key)
+                    started[key] = parse_time(record.get("timestamp"))
                 by_id[key] = usage or by_id.get(key)
                 if usage:
                     recorded_output[key] = max(recorded_output.get(key, 0), usage.get("output_tokens") or 0)
@@ -208,11 +244,12 @@ class Run:
                         continue
                     self.tools[block.get("name")] = self.tools.get(block.get("name"), 0) + 1
                     self.reads.extend(read_paths(block.get("name"), block.get("input") or {}))
+        kept = [key for key in order if by_id.get(key)]
         self.usages = [
             dict(by_id[key], output_tokens=max(recorded_output.get(key, 0), round(chars.get(key, 0) / CHARS_PER_TOKEN)))
-            for key in order
-            if by_id.get(key)
+            for key in kept
         ]
+        self.times = [started.get(key) for key in kept]
 
     @property
     def header(self):
@@ -239,6 +276,9 @@ class Run:
             "output": totals["output_tokens"],
             "weighted": round(sum(weighted(usage) for usage in usages)),
             "tool_calls": sum(self.tools.values()),
+            "cold": sum(1 for usage in usages[1:] if is_cold(usage)),
+            "last_at": next((moment for moment in reversed(self.times) if moment), None),
+            "ttl": self.cache_ttl(),
         }
 
 
@@ -268,13 +308,189 @@ def load_session(path):
     return runs
 
 
-def agent_spend(project, agent_id):
-    """Weighted spend and final context of one subagent, or None if its transcript is not found."""
-    path = find_agent_transcript(project, agent_id)
-    if path is None:
+# --- Codex -----------------------------------------------------------------------------
+
+def codex_home():
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
+
+def codex_usage(usage):
+    """A Codex usage in the Claude Code shape: cached input is a cache read, the rest input."""
+    cached = usage.get("cached_input_tokens") or 0
+    return {
+        "input_tokens": max((usage.get("input_tokens") or 0) - cached, 0),
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": cached,
+        "output_tokens": usage.get("output_tokens") or 0,
+    }
+
+
+def rollout_meta(path):
+    with open(path, encoding="utf-8") as stream:
+        for _, line in zip(range(5), stream):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                return None
+            if record.get("type") == "session_meta":
+                return record.get("payload") or {}
+    return None
+
+
+def codex_threads(project):
+    """Codex threads that ran in this project: {thread id: {"meta", "paths", "mtime"}}.
+    A resumed thread may continue in another rollout file."""
+    roots = {str(Path(project).absolute()), str(Path(project).resolve())}
+    folder = codex_home() / "sessions"
+    threads = {}
+    for path in sorted(folder.rglob("rollout-*.jsonl")) if folder.is_dir() else ():
+        meta = rollout_meta(path)
+        if not meta or not meta.get("id") or meta.get("cwd") not in roots:
+            continue
+        thread = threads.setdefault(meta["id"], {"meta": meta, "paths": [], "mtime": 0})
+        thread["paths"].append(path)
+        thread["mtime"] = max(thread["mtime"], path.stat().st_mtime)
+    return threads
+
+
+def codex_source(meta):
+    """user (a session someone started), subagent or guardian_review."""
+    return meta.get("thread_source") or ("subagent" if meta.get("parent_thread_id") else "user")
+
+
+def codex_agent_name(meta):
+    source = meta.get("source")
+    spawn = ((source.get("subagent") or {}).get("thread_spawn") or {}) if isinstance(source, dict) else {}
+    return (meta.get("agent_path") or spawn.get("agent_path") or "").rsplit("/", 1)[-1]
+
+
+class CodexRun(Run):
+    """One Codex thread: the producer or one agent."""
+
+    def __init__(self, thread, label="producer", agent_type=""):
+        self.thread = thread
+        super().__init__(thread["paths"][0], label, agent_type)
+
+    def cache_ttl(self):
+        return CODEX_CACHE_TTL
+
+    def load(self):
+        responses = {}
+        totals = []
+        for path in self.thread["paths"]:
+            with open(path, encoding="utf-8") as stream:
+                for line in stream:
+                    if not line.strip():
+                        continue
+                    record = json.loads(line)
+                    kind = record.get("type")
+                    payload = record.get("payload") or {}
+                    moment = parse_time(record.get("timestamp"))
+                    if kind == "turn_context":
+                        self.model = payload.get("model") or self.model
+                    elif kind == "token_usage_record":
+                        key = payload.get("response_id") or f"{path.name}:{len(responses)}"
+                        responses.setdefault(key, (moment, payload.get("usage") or {}))
+                    elif kind == "event_msg" and payload.get("type") == "token_count":
+                        total = (payload.get("info") or {}).get("total_token_usage")
+                        if total:
+                            totals.append((moment, total))
+                    elif kind == "response_item" and payload.get("type") in ("function_call", "custom_tool_call"):
+                        name = payload.get("name") or "?"
+                        self.tools[name] = self.tools.get(name, 0) + 1
+        entries = list(responses.values())
+        if not entries and totals:
+            # Older rollouts have no record per response, only a running total.
+            entries = [max(totals, key=lambda entry: entry[1].get("total_tokens") or 0)]
+        self.usages = [codex_usage(usage) for _, usage in entries]
+        self.times = [moment for moment, _ in entries]
+
+
+def latest_codex_session(threads):
+    roots = [thread for thread in threads.values() if codex_source(thread["meta"]) == "user"]
+    return max(roots, key=lambda thread: thread["mtime"], default=None)
+
+
+def load_codex_session(threads, root):
+    runs = [CodexRun(root)]
+    root_id = root["meta"]["id"]
+    children = [
+        thread for thread in threads.values()
+        if thread["meta"].get("session_id") == root_id and thread["meta"]["id"] != root_id
+    ]
+    for thread in sorted(children, key=lambda item: item["mtime"]):
+        meta = thread["meta"]
+        role = meta.get("agent_role") or codex_source(meta)
+        run = CodexRun(thread, agent_type=role)
+        run.label = " ".join(part for part in (re.sub(r"^studio-", "", role), codex_agent_name(meta)) if part)
+        runs.append(run)
+    return runs
+
+
+def find_codex_thread(project, agent_id):
+    """A Codex agent by thread id or by name (`/root/s1_w2_artist` or `s1_w2_artist`);
+    the latest one if a name repeats."""
+    name = agent_id.rsplit("/", 1)[-1]
+    matches = [
+        thread for thread in codex_threads(project).values()
+        if thread["meta"]["id"] == agent_id or (name and codex_agent_name(thread["meta"]) == name)
+    ]
+    return max(matches, key=lambda thread: thread["mtime"], default=None)
+
+
+# --- both platforms ----------------------------------------------------------------------
+
+def latest_producer(project, threads):
+    """The newest producer session on either platform: a Claude Code transcript path, a
+    Codex thread, or None."""
+    try:
+        claude = latest_session(project)
+    except TokensError:
+        claude = None
+    codex = latest_codex_session(threads)
+    if codex and (claude is None or codex["mtime"] > claude.stat().st_mtime):
+        return codex
+    return claude
+
+
+def producer_run(project):
+    """(session name, Run) of the latest producer session, or None."""
+    latest = latest_producer(project, codex_threads(project))
+    if latest is None:
         return None
-    metrics = Run(path).metrics()
-    return {"weighted": metrics["weighted"], "final_context": metrics["final_context"], "requests": metrics["requests"]}
+    if isinstance(latest, Path):
+        return latest.stem, Run(latest)
+    return latest["meta"]["id"], CodexRun(latest)
+
+
+def session_runs(project, session=None):
+    """(session name, runs) of the given session or the latest one, on either platform."""
+    threads = codex_threads(project)
+    if session and session in threads:
+        return session, load_codex_session(threads, threads[session])
+    latest = resolve_session(project, session) if session else latest_producer(project, threads)
+    if latest is None:
+        raise TokensError(f"no Claude Code or Codex sessions for {project}")
+    if isinstance(latest, Path):
+        return latest.stem, load_session(latest)
+    return latest["meta"]["id"], load_codex_session(threads, latest)
+
+
+def agent_spend(project, agent_id):
+    """Spend, final context and cache state of one agent, or None if its transcript is not
+    found. Claude Code agents are found by agent id, Codex agents by thread id or name."""
+    path = find_agent_transcript(project, agent_id)
+    if path is not None:
+        run = Run(path)
+    else:
+        thread = find_codex_thread(project, agent_id)
+        if thread is None:
+            return None
+        run = CodexRun(thread)
+    metrics = run.metrics()
+    return {key: metrics[key] for key in ("weighted", "final_context", "requests", "cold", "last_at", "ttl")}
 
 
 def relative(project, path):
@@ -314,6 +530,7 @@ def summarize(project, runs):
         "producer_requests": rows[0]["requests"] if rows else 0,
         "agent_requests": sum(row["requests"] for row in rows[1:]),
         "agent_prefix_share": round(prefix / agent_input, 3) if agent_input else 0,
+        "cold_requests": sum(row["cold"] for row in rows),
         "input_tokens_processed": total_input,
         "repeated_reads": repeated_reads(project, runs),
     }
@@ -328,14 +545,15 @@ def short(number):
     return str(int(number))
 
 
-def print_report(session, summary, top):
+def print_report(name, summary, top):
     rows = summary["runs"]
-    print(f"Session {session.stem}: producer + {len(rows) - 1} agent runs")
-    print(f"{'run':<34} {'req':>4} {'start':>7} {'peak':>7} {'cw':>7} {'cr':>8} {'out':>7} {'weighted':>9}")
+    print(f"Session {name}: producer + {len(rows) - 1} agent runs")
+    print(f"{'run':<34} {'req':>4} {'start':>7} {'peak':>7} {'cw':>7} {'cr':>8} {'out':>7} {'cold':>5} {'weighted':>9}")
     for row in rows:
         print(
             f"{row['label'][:34]:<34} {row['requests']:>4} {short(row['start']):>7} {short(row['peak']):>7} "
-            f"{short(row['cache_write']):>7} {short(row['cache_read']):>8} {short(row['output']):>7} {short(row['weighted']):>9}"
+            f"{short(row['cache_write']):>7} {short(row['cache_read']):>8} {short(row['output']):>7} "
+            f"{row['cold']:>5} {short(row['weighted']):>9}"
         )
     total = summary["total_weighted"] or 1
     print(
@@ -344,6 +562,9 @@ def print_report(session, summary, top):
         f"agents {short(summary['agents_weighted'])} ({summary['agent_requests']} requests)"
     )
     print(f"Agent start prefix re-sent: {summary['agent_prefix_share']:.0%} of agent input")
+    if summary["cold_requests"]:
+        print(f"Cold cache: {summary['cold_requests']} requests wrote their context again "
+              "(an agent continued after its cache expired, or a long pause)")
     reads = summary["repeated_reads"][:top]
     if reads:
         print("Read more than once (path: runs, reads):")
@@ -352,12 +573,12 @@ def print_report(session, summary, top):
 
 
 def command_report(args):
-    session = resolve_session(args.project, args.session)
-    summary = summarize(args.project, load_session(session))
+    name, runs = session_runs(args.project, args.session)
+    summary = summarize(args.project, runs)
     if args.json:
-        print(json.dumps(dict(summary, session=str(session)), ensure_ascii=False, indent=2))
+        print(json.dumps(dict(summary, session=name), ensure_ascii=False, indent=2))
         return 0
-    print_report(session, summary, args.top)
+    print_report(name, summary, args.top)
     return 0
 
 
@@ -374,18 +595,18 @@ def command_agent(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="Token spend from Claude Code transcripts.")
+    parser = argparse.ArgumentParser(description="Token spend from Claude Code and Codex transcripts.")
     parser.add_argument("--project", default=".", help="game project root (default: current directory)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     report = sub.add_parser("report", help="spend of a session: producer, every agent run, repeated reads")
-    report.add_argument("--session", help="session id or path to its .jsonl (default: the latest)")
+    report.add_argument("--session", help="Claude Code session id or .jsonl path, or Codex thread id (default: the latest)")
     report.add_argument("--top", type=int, default=10, help="how many repeated reads to show")
     report.add_argument("--json", action="store_true")
     report.set_defaults(handler=command_report)
 
     agent = sub.add_parser("agent", help="weighted spend and final context of one subagent")
-    agent.add_argument("agent_id")
+    agent.add_argument("agent_id", help="Claude Code agent id, or Codex thread id or agent name")
     agent.add_argument("--json", action="store_true")
     agent.set_defaults(handler=command_agent)
     return parser

@@ -3,6 +3,7 @@ name: art-director
 description: Art director of the game-studio team. Writes the Art Bible and the palette, reviews the artist's mockups and sprites and the game screenshots by actually looking at the PNGs. Never draws. Called only from the game-studio skill.
 model: sonnet
 effort: medium
+omitClaudeMd: true
 color: red
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---

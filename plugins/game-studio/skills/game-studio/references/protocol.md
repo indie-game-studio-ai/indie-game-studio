@@ -110,7 +110,8 @@ QA/       test-plans/, reports/, bugs/B-NNN.md, screenshots/S<n>/
     "profile": "standard",
     "max_agent_runs_per_sprint": 30, "max_tokens_per_sprint": 6000000,
     "meeting": "involved", "reviews": "batched", "reuse_reviewers": true,
-    "reuse_max_context": 40000, "verify": "sprint-end", "tests_first": true
+    "reuse_max_context": 40000, "reuse_cold_max_context": 15000,
+    "verify": "sprint-end", "tests_first": true
   },
   "git": { "auto_commit": false },
   "autopilot": false
@@ -398,6 +399,7 @@ right checks at the right time, not from repeating them.
 | Agent runs per sprint | 15 | 30 | 60 |
 | Tokens per sprint (weighted, producer included) | 3M | 6M | 12M |
 | Continue an agent up to this context | 40K | 40K | 60K |
+| … once its cache has expired | 15K | 15K | 15K |
 
 The token caps are a first estimate from comparable runs. After a real sprint, compare
 them with `tokens.py report` and adjust `budget.max_tokens_per_sprint`.
@@ -420,30 +422,39 @@ passes both the model and the effort to `Agent`; in Codex the effort.
   subagent that inherits the session's tools also inherits the list of every skill and
   MCP tool the user has: 21.9K tokens before the first word, against 7.6K with the
   explicit tool list the studio agents have. That start was 42–83% of all agent input.
+- A Codex agent inherits the list of all the user's skills and, unless told otherwise,
+  the whole conversation of the agent that spawned it. A probe role started at 29.7K
+  tokens, and at 20.3K without the skill list.
 - The producer was 32–72% of a session's spend. Every bookkeeping command is a request
   that re-sends the producer's whole context, which grows all session long.
+- The prompt cache of a Claude Code subagent lives 5 minutes, and waves are longer. A
+  continued agent whose cache has expired writes its whole context again at 1.25×.
 
 So:
-- **Agents** have an explicit tool list and medium effort (`scripts/build.py`); they
-  never inherit the session's tools or effort.
+- **Agents** have an explicit tool list and medium effort and do not load `CLAUDE.md`
+  (`scripts/build.py`); they never inherit the session's tools or effort. Codex roles
+  switch off the skill list, connectors, plugins and memories, and the producer spawns
+  them with `fork_turns: "none"`.
 - **Packs** replace the turns an agent spends collecting its context (§6).
 - **Waves** take two producer calls: `waves.py start` and `waves.py finish`. Agents answer
   in one line; the summary stays in the report, where `waves.py finish` reads it.
 - **Continue an agent** only within the sprint, on the same model, and while its last
-  context is at most `budget.reuse_max_context`. A continued agent re-sends its whole
-  context on every request, and after 5 idle minutes the cache is gone and it is written
-  again at 1.25×. Past the limit a fresh agent with a pack is cheaper. `waves.py start`
-  decides and prints `continue agent <id>` or `new agent`.
+  context is at most `budget.reuse_max_context`. Once its cache has expired (5 minutes
+  after its last request; 1 hour when the transcript shows 1-hour cache writes), only
+  up to `budget.reuse_cold_max_context`. A continued agent re-sends its whole context on
+  every request; past these limits a fresh agent with a pack is cheaper. `waves.py
+  start` decides and prints `continue agent <id>` with the cache state, or `new agent`.
 
 **Spend.** Tokens are weighted, input-equivalent tokens: input ×1, cache write ×1.25
-(×2 for 1 h), cache read ×0.1, output ×5. In Claude Code `waves.py finish` reads each
-run's spend from its transcript by agent id, and the producer's spend since the last
-wave from the session transcript; it logs both with `budget.py log`. The
-`subagent_tokens` figure of `Agent` is only the last request's size, not the spend; pass
-it as `:<n>` only when there is no transcript. In Codex the runs are logged without
-tokens and only the run cap applies. `waves.py start` stops with an early gate when the
-next wave would pass the cap. `tokens.py report` shows the whole session: producer,
-every run, the start prefix share and files read more than once.
+(×2 for 1 h), cache read ×0.1, output ×5. Codex has no cache write price: its uncached
+input counts ×1. `waves.py finish` reads each run's spend from its transcript (Claude
+Code: by agent id; Codex: by the agent's name or thread id), and the producer's spend
+since the last wave from the session transcript; it logs both with `budget.py log`.
+The `subagent_tokens` figure of `Agent` is only the last request's size, not the spend;
+pass it as `:<n>` only when there is no transcript. `waves.py start` stops with an
+early gate when the next wave would pass the cap. `tokens.py report` shows the whole
+session: producer, every run, the start prefix share, requests that found the cache
+cold and files read more than once.
 
 **Running commands.** Every project command goes through
 `python3 Studio/tools/quiet.py "<command>"`. The full output lands in

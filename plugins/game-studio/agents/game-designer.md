@@ -3,6 +3,7 @@ name: game-designer
 description: Game designer of the game-studio team. Builds the kickoff decision tree and writes the GDD, the backlog and feature specs with player-facing acceptance criteria. Answers meeting questions, reviews sound, text and levels, and accepts features. Called only from the game-studio skill.
 model: sonnet
 effort: medium
+omitClaudeMd: true
 color: purple
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---

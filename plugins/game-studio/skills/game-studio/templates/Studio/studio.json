@@ -125,6 +125,7 @@
     "reviews": "batched",
     "reuse_reviewers": true,
     "reuse_max_context": 40000,
+    "reuse_cold_max_context": 15000,
     "verify": "sprint-end",
     "tests_first": true
   },

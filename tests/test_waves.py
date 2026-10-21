@@ -63,13 +63,32 @@ class SummaryTest(unittest.TestCase):
         self.assertIsNone(waves.parse_summary("# Report\nSTATUS: DONE\n"))
 
 
+class ReuseTest(unittest.TestCase):
+    def test_a_large_agent_is_continued_only_while_its_cache_is_warm(self):
+        agents = {"artist": {"agent": "a1", "sprint": 1, "model": "sonnet", "context": 20000, "last_at": 1000.0, "ttl": 300}}
+        group = {"role": "artist", "kind": "RUN"}
+        budget = {"reuse_max_context": 40000, "reuse_cold_max_context": 15000}
+
+        def reused(now):
+            previous = waves.reusable_agent(agents, group, 1, "sonnet", False, budget, now)
+            return previous["agent"] if previous else None
+
+        self.assertEqual(reused(1200.0), "a1")
+        # The producer needs a minute to launch it, so the cache must outlive that.
+        self.assertIsNone(reused(1250.0))
+        agents["artist"]["context"] = 12000
+        self.assertEqual(reused(9000.0), "a1")
+        agents["artist"]["context"] = 50000
+        self.assertIsNone(reused(1000.0))
+
+
 class WaveTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         base = Path(self.temp.name).resolve()
         self.project = base / "game"
         self.project.mkdir()
-        self.env = dict(os.environ, CLAUDE_CONFIG_DIR=str(base / "claude"))
+        self.env = dict(os.environ, CLAUDE_CONFIG_DIR=str(base / "claude"), CODEX_HOME=str(base / "codex"))
         result = subprocess.run(
             [sys.executable, str(TOOLS / "studio_init.py"), str(self.project), "--json", "--language", "en"],
             capture_output=True, text=True,
@@ -304,7 +323,7 @@ class WaveTest(unittest.TestCase):
         self.wave("start")
         self.write("Studio/reviews/art/T-001-r1.md", "## Summary\nSTATUS: CHANGES_REQUESTED\n")
         self.wave("finish", "--agent", "art-director=r1")
-        self.assertIn("artist FIX T-001 — model=sonnet effort=medium — continue agent art1 (context 10.0K)",
+        self.assertIn("artist FIX T-001 — model=sonnet effort=medium — continue agent art1 (context 10.0K, cache cold)",
                       self.wave("start"))
 
         # The continued agent's transcript holds both runs; only the new part is logged.
@@ -314,6 +333,29 @@ class WaveTest(unittest.TestCase):
         last_artist = [json.loads(line) for line in self.read("Studio/.state/budget.jsonl").splitlines()
                        if json.loads(line)["role"] == "artist"][-1]
         self.assertEqual(last_artist["tokens"], 1250 + 1000)
+
+    def test_codex_agents_are_found_by_their_names(self):
+        codex = Path(self.env["CODEX_HOME"]) / "sessions" / "2026" / "10" / "21"
+        cwd = str(self.project.resolve())
+
+        def rollout(meta, *responses):
+            records = [{"type": "session_meta", "payload": dict(meta, cwd=cwd, session_id="root")}] + [
+                {"type": "token_usage_record", "payload": {"response_id": f"{meta['id']}-{index}", "usage": {
+                    "input_tokens": input_tokens, "cached_input_tokens": cached, "output_tokens": 0}}}
+                for index, (input_tokens, cached) in enumerate(responses)
+            ]
+            codex.mkdir(parents=True, exist_ok=True)
+            (codex / f"rollout-{meta['id']}.jsonl").write_text(
+                "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+        rollout({"id": "root", "thread_source": "user"}, (30000, 0))
+        self.tasks(["artist/WORK: Ship sprite [feature: F-001]"])
+        self.assertIn("new agent s1_w1_artist", self.wave("start"))
+        rollout({"id": "child", "thread_source": "subagent", "agent_path": "/root/s1_w1_artist"}, (20000, 0))
+        self.report("Studio/reports/S1/T-001.artist.md", "STATUS: DONE", "FILES: Art/export/ship.png")
+        out = self.wave("finish")
+        self.assertIn("spend: agents 20.0K, producer 30.0K", out)
+        self.assertEqual(json.loads(self.read("Studio/.state/agents.json"))["artist"]["agent"], "s1_w1_artist")
 
 
 if __name__ == "__main__":

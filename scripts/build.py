@@ -10,6 +10,13 @@ Claude agents get an explicit tool list. Without it a subagent inherits every to
 the session, and with them the list of all the user's skills and MCP tools: a probe run
 started at 21.9K tokens with inherited tools and at 7.6K with this list
 (scripts/probe_overhead.py). An explicit effort keeps agents off the session's effort.
+`omitClaudeMd` drops the user's and the project's CLAUDE.md and rules: 8242 → 7079 tokens
+for the artist with 3.6K characters of user rules. Project conventions reach the agents
+through Tech/ARCHITECTURE.md instead.
+
+A Codex role inherits the parent's tools, sandbox and MCP servers; it can only switch
+features off. Studio roles drop the skill list (22K characters in a measured setup, from
+`codex debug prompt-input`), connectors, plugins and memories.
 """
 from __future__ import annotations
 
@@ -26,6 +33,7 @@ CLAUDE_DEFAULT_MODEL = "sonnet"
 CLAUDE_DEFAULT_EFFORT = "medium"
 CLAUDE_TOOLS = ("Read", "Write", "Edit", "Bash", "Glob", "Grep")
 CODEX_DEFAULT_EFFORT = "medium"
+CODEX_FEATURES_OFF = ("apps", "plugins", "memories")
 REQUIRED_KEYS = ("name", "description", "color")
 OPTIONAL_KEYS = ("extra_tools",)
 
@@ -71,6 +79,7 @@ def claude_agent(meta: dict, body: str, common: str) -> str:
         f"description: {meta['description']}\n"
         f"model: {CLAUDE_DEFAULT_MODEL}\n"
         f"effort: {CLAUDE_DEFAULT_EFFORT}\n"
+        "omitClaudeMd: true\n"
         f"color: {meta['color']}\n"
         f"tools: {claude_tools(meta)}\n"
         "---\n\n"
@@ -95,6 +104,9 @@ def codex_agent(meta: dict, body: str, common: str) -> str:
         f"description = {toml_basic_string(meta['description'])}\n"
         f"model_reasoning_effort = {toml_basic_string(CODEX_DEFAULT_EFFORT)}\n"
         f"developer_instructions = '''\n{text}'''\n"
+        "\n[features]\n"
+        + "".join(f"{feature} = false\n" for feature in CODEX_FEATURES_OFF)
+        + "\n[skills]\ninclude_instructions = false\n"
     )
 
 

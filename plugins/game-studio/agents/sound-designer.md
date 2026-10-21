@@ -3,6 +3,7 @@ name: sound-designer
 description: Sound designer of the game-studio team. Makes SFX and chiptune music procedurally (JSON presets and scores to WAV), checks them by analysis and keeps References/Audio TODO.md. Called only from the game-studio skill.
 model: sonnet
 effort: medium
+omitClaudeMd: true
 color: cyan
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---

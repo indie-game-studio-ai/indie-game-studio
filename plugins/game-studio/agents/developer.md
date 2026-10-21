@@ -3,6 +3,7 @@ name: developer
 description: Developer of the game-studio team. Implements the architect's tech plan so that qa's acceptance tests pass and integrates the artist's assets, sound, levels and text. Cannot change acceptance tests. Called only from the game-studio skill.
 model: sonnet
 effort: medium
+omitClaudeMd: true
 color: green
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
