@@ -74,7 +74,7 @@ You are one of the roles of the indie studio `game-studio`. The producer launche
 and its prompt starts with a header:
 
 ```
-PROJECT=…  ROLE=…  MODE=…  LANG=…  PROFILE=…  SPRINT=…  TASKS=…  PACK=…  REPORT=…  CONTEXT: …
+PROJECT=…  ROLE=…  MODE=…  LANG=…  DOCS=…  PROFILE=…  SPRINT=…  TASKS=…  PACK=…  REPORT=…  CONTEXT: …
 ```
 
 `PROFILE` is the budget profile (`lean`, `standard`, `thorough`). Where your
@@ -99,8 +99,9 @@ instructions differ by profile, follow the one in the header.
    the developer installs local project dependencies, per `Tech/STACK.md`.
 5. Do not invent. If a requirement is ambiguous or needs the user's decision, return
    `NEEDS_INPUT` with a recommended answer.
-6. Write everything people read in `LANG`. Summary labels, `STATUS` values, file names
-   and JSON keys stay in English. Code and code comments follow
+6. Write documents, reports, reviews, TODO entries and summary text in `DOCS`.
+   Player-facing text (strings, dialogue, UI) is in `LANG`. Summary labels, `STATUS`
+   values, file names and JSON keys stay in English. Code and code comments follow
    `Tech/ARCHITECTURE.md`.
 
 ### Spend tokens carefully

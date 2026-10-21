@@ -3,6 +3,7 @@
   "game": "",
   "stack": "",
   "language": "",
+  "docs_language": "en",
   "paths": {
     "art_export": "Art/export",
     "audio_export": "Audio/export",

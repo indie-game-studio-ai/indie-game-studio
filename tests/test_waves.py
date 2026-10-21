@@ -63,6 +63,18 @@ class SummaryTest(unittest.TestCase):
         self.assertIsNone(waves.parse_summary("# Report\nSTATUS: DONE\n"))
 
 
+class PromptTest(unittest.TestCase):
+    def test_documents_language_is_separate_from_the_users(self):
+        run = {"role": "artist", "mode": "WORK", "ids": ["T-001"], "pack": "p.md", "report": "r.md", "context": []}
+
+        def header(config):
+            return waves.prompt(run, "/game", config, 1)
+
+        self.assertIn("LANG=ru\nDOCS=en\n", header({"language": "ru", "docs_language": "en"}))
+        # A project started before docs_language keeps its documents in the user's language.
+        self.assertIn("LANG=ru\nDOCS=ru\n", header({"language": "ru"}))
+
+
 class ReuseTest(unittest.TestCase):
     def test_a_large_agent_is_continued_only_while_its_cache_is_warm(self):
         agents = {"artist": {"agent": "a1", "sprint": 1, "model": "sonnet", "context": 20000, "last_at": 1000.0, "ttl": 300}}

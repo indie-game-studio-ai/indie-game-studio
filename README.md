@@ -13,8 +13,12 @@ the code, the developer implements. The game designer accepts the result. The pr
 calls you at kickoff and after every sprint.
 
 The studio works in **your language**. The producer detects it from your first message
-and stores it in `Studio/studio.json → language`. Every document, report, review and
-gate summary is written in that language. Prompts, templates and tools are in English.
+and stores it in `Studio/studio.json → language`: it talks to you, writes the gate
+summaries and makes the game's primary locale in it. The studio's own documents (GDD,
+specs, tasks, reports, reviews) are in `docs_language`, English by default, because
+agents re-read them many times and the same text costs 30–40% more tokens in Russian.
+Set `docs_language` to your language to read them in it. Prompts, templates and tools
+are in English.
 
 <p align="center"><img src="docs/images/pipeline.jpg" alt="A conveyor belt carrying an idea through spec, art, code and QA to a shipped trophy" width="100%"></p>
 

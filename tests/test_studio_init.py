@@ -39,6 +39,7 @@ class StudioInitTest(unittest.TestCase):
         config = json.loads((self.project / "Studio" / "studio.json").read_text(encoding="utf-8"))
         self.assertEqual(config["game"], "Asteroids")
         self.assertEqual(config["language"], "ru")
+        self.assertEqual(config["docs_language"], "en")
         self.assertEqual((self.project / ".gitignore").read_text(encoding="utf-8"), "Studio/.state/\n")
 
     def test_repeat_resumes_without_overwriting(self):

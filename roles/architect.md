@@ -41,8 +41,9 @@ Input in `CONTEXT`: `Studio/decisions.md` and the stack profile
    `CLAUDE.md`: if the project has one, copy the rules the team must follow into these
    conventions.
 3. `Studio/studio.json`: `stack`, `paths`, `commands`, `zones`, `ignore` from the
-   profile, adapted to the project. Do not touch `language`, `limits`, `git`,
-   `autopilot`. Check that the zones expand: `python3 Studio/tools/zones.py zones`.
+   profile, adapted to the project. Do not touch `language`, `docs_language`, `limits`,
+   `git`, `autopilot`. Check that the zones expand: `python3 Studio/tools/zones.py
+   zones`.
 4. Do not write the project skeleton yourself. Return it in `NEW TASKS`:
    `developer/WORK: Project skeleton per Tech/STACK.md`. Done when the project builds,
    the unit and acceptance runners pass on an empty test and `capture` saves a PNG of

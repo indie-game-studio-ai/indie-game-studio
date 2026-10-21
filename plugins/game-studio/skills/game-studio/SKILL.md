@@ -27,7 +27,14 @@ brief, their messages). If the user explicitly names a language, use that one. S
 it as an ISO 639-1 code in `studio.json → language` and pass it to every agent as
 `LANG`. Talk to the user, run the grilling and write gate summaries in that language.
 If the user switches language or asks for another one, update `language` and use it
-from the next agent call on. Rules for roles are in `Studio/PROTOCOL.md` §2.
+from the next agent call on.
+
+Studio documents are in `studio.json → docs_language`, `en` by default, passed as
+`DOCS`: agents re-read them many times, and the same text costs 30–40% more tokens in
+Russian. Write your own studio files (minutes, `decisions.md`, retro) in it and
+translate what you show the user. When `language` is not `docs_language`, say so in
+one line at kickoff; if the user wants the documents in their language, set
+`docs_language` to `language`. Rules for roles are in `Studio/PROTOCOL.md` §2.
 
 ## Platform
 
@@ -133,6 +140,7 @@ PROJECT=<absolute path>
 ROLE=<role>
 MODE=<mode>
 LANG=<language code>
+DOCS=<language code>
 PROFILE=<budget profile>
 SPRINT=<n>
 TASKS=T-007[,T-008]

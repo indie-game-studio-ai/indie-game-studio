@@ -208,6 +208,8 @@ def prompt(run, project, config, sprint):
         f"ROLE={run['role']}",
         f"MODE={run['mode']}",
         f"LANG={config.get('language') or 'en'}",
+        # Projects started before docs_language kept their documents in `language`.
+        f"DOCS={config.get('docs_language') or config.get('language') or 'en'}",
         f"PROFILE={budget.get('profile', 'standard')}",
         f"SPRINT={sprint}",
         f"TASKS={','.join(run['ids'])}",

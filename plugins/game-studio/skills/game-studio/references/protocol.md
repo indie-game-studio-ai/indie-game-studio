@@ -30,20 +30,25 @@ through files and through the producer.
 
 ## 2. Working language
 
-`studio.json → language` holds the studio's working language as an ISO 639-1 code (`ru`,
-`en`, …). The producer sets it at start from the language the user writes in. The
-user can change it at any time. The producer passes it to every agent as `LANG`.
+Two ISO 639-1 codes (`ru`, `en`, …) in `studio.json`; the user can change both at any
+time.
 
-- Everything people read is written in `LANG`: documents, reports, reviews, summary
-  text, TODO entries, bug reports, questions to the user.
+- `language` is the user's language. The producer sets it at start from the language
+  the user writes in, talks to the user and writes gate summaries in it, and passes it
+  to every agent as `LANG`. It is the game's primary locale: player-facing text lives in
+  `Narrative/strings/<LANG>.json`; other locales come from the GDD.
+- `docs_language` is the language of the studio's documents, which agents write and
+  re-read many times: GDD, specs, plans, tasks, minutes, reports, reviews, TODO entries,
+  bug reports, `decisions.md`, `questions.md`, the ledger. It is `en` by default: the
+  same text costs 30–40% more tokens in Russian on both platforms. The producer passes
+  it as `DOCS` and translates what it shows the user. The user can switch it to
+  `language` to read the documents in their own language.
 - Machine-readable parts stay in English: summary field labels and `STATUS` values,
   task frontmatter keys, statuses, modes, file and folder names, JSON keys.
 - Code, identifiers and code comments follow `Tech/ARCHITECTURE.md` (English by
   default).
-- Player-facing text lives in `Narrative/strings/<LANG>.json` as the primary locale.
-  Other locales come from the GDD.
 - Templates are in English. When a role fills one in, it may translate the headings into
-  `LANG`, except the ones tools read: the `##` headings of feature specs and the
+  `DOCS`, except the ones tools read: the `##` headings of feature specs and the
   `## Summary` heading of reports.
 
 ## 3. Game project layout
@@ -83,7 +88,8 @@ QA/       test-plans/, reports/, bugs/B-NNN.md, screenshots/S<n>/
   "version": 1,
   "game": "Title",
   "stack": "web-phaser | godot4 | unity | custom",
-  "language": "en",
+  "language": "ru",
+  "docs_language": "en",
   "paths": {
     "art_export": "Art/export",
     "audio_export": "Audio/export",
@@ -128,8 +134,8 @@ QA/       test-plans/, reports/, bugs/B-NNN.md, screenshots/S<n>/
   scene.
 
 The architect fills `stack`, `paths`, `commands` and engine zones during
-pre-production. Only the producer changes `language`, `limits`, `budget`, `git` and
-`autopilot`, and only by the user's decision. A budget profile is applied with
+pre-production. Only the producer changes `language`, `docs_language`, `limits`,
+`budget`, `git` and `autopilot`, and only by the user's decision. A budget profile is applied with
 `budget.py profile <name>` (§14).
 
 ## 5. Tasks
@@ -219,6 +225,7 @@ PROJECT=<absolute path to the game project>
 ROLE=<role>
 MODE=<mode>
 LANG=<language code>
+DOCS=<language code>
 PROFILE=<lean | standard | thorough>
 SPRINT=<n>
 TASKS=T-007[,T-008]                   (one task, or a batch of the same role and mode)
@@ -279,7 +286,7 @@ items go on their own `- ` lines under the label. A new task outside this sprint
 features gets `[later]` and lands in `Studio/proposals.md`. A task line may also carry
 `[feature: F-…]`, `[inputs: …]`, `[outputs: …]`, `[done: a; b]` and `[desc: …]`.
 
-Leave out empty lines. The labels stay in English; the text after them is in `LANG`.
+Leave out empty lines. The labels stay in English; the text after them is in `DOCS`.
 `waves.py finish` reads the summary from the report and moves the board, so the agent's
 final answer to the producer is one line: `<STATUS or per-task statuses> — <REPORT>`.
 That keeps the producer's context from growing by a summary per run.
@@ -377,7 +384,7 @@ them again.
 - Do not invent. An ambiguous requirement means `NEEDS_INPUT` with a recommended answer.
 - "Done" needs proof: a command and its output, a path to a file or PNG.
 - No commits, no pushes, no global installs.
-- Write in `LANG`, briefly, one thought per sentence.
+- Write in `DOCS`, briefly, one thought per sentence.
 
 ## 14. Token economy
 
