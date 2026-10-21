@@ -5,7 +5,8 @@ status: draft
 sprint:
 ---
 
-> Fill in the project's working language (studio.json → language); headings may be translated.
+> Fill in the project's working language (studio.json → language). Keep the `##` headings
+> in English: `board.py pack` cuts the spec into each role's part by them.
 
 # F-NNN: <title>
 

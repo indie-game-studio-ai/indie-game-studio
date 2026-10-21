@@ -19,12 +19,15 @@ This repository is the studio plugin, not a game. `CLAUDE.md` is a symlink to th
 
 1. To change a role, edit `roles/<role>.md`, then run `python3 scripts/build.py`.
 2. To change the protocol (modes, statuses, task or summary format), update
-   `protocol.md`, `SKILL.md`, the roles and `board.py`/`zones.py` together. Otherwise
-   the roles and the producer drift apart.
+   `protocol.md`, `SKILL.md`, the roles and `board.py`/`waves.py`/`zones.py` together.
+   Otherwise the roles and the producer drift apart.
 3. Tools are Python 3.9+, stdlib only, with English `--help`. New behaviour comes with a
    test in `tests/`.
 4. Before committing: `python3 scripts/build.py --check` and
    `python3 -m unittest discover -s tests -t .`.
+5. A change to agent frontmatter or to what agents read at start: run
+   `python3 scripts/probe_overhead.py` (a few cents of real tokens) and compare the
+   start size with the one in `scripts/build.py`.
 
 ## Style
 

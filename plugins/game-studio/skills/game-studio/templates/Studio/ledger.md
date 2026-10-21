@@ -7,15 +7,13 @@
 - Wave: 0
 - Mode: interactive
 
-## Sprint agents
-
-| Role | Agent id | Since task |
-|---|---|---|
-
 ## Gates
 
 | When | Gate | User decision |
 |---|---|---|
 
 ## Timeline
+
+`waves.py finish` appends a line per wave; agent ids are in `Studio/.state/agents.json`.
+
 

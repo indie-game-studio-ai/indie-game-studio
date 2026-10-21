@@ -2,8 +2,13 @@
 """Studio token budget: profiles, model routing and per-sprint spend.
 
 Profiles set the limits, the meeting format and the review policy in
-Studio/studio.json. Routing picks a model (Claude Code) and a reasoning effort
-(Codex) for a role and mode. The spend log lives in Studio/.state/budget.jsonl.
+Studio/studio.json. Routing picks a model (Claude Code) and a reasoning effort (both
+platforms) for a role and mode. The spend log lives in Studio/.state/budget.jsonl.
+
+Tokens are weighted, input-equivalent tokens as tokens.py counts them, and the
+producer's own spend is logged under the role "producer". The caps are a first
+estimate from comparable multi-agent runs; compare them with `tokens.py report` after a
+real sprint.
 """
 import argparse
 import json
@@ -17,10 +22,11 @@ PROFILES = {
         "limits": {"parallel_agents": 3, "features_per_sprint": 1, "rework_cycles": 2, "max_sprints": 3},
         "budget": {
             "max_agent_runs_per_sprint": 15,
-            "max_tokens_per_sprint": 1200000,
+            "max_tokens_per_sprint": 3000000,
             "meeting": "none",
             "reviews": "per-feature",
             "reuse_reviewers": True,
+            "reuse_max_context": 40000,
             "verify": "sprint-end",
             "tests_first": False,
         },
@@ -29,10 +35,11 @@ PROFILES = {
         "limits": {"parallel_agents": 4, "features_per_sprint": 2, "rework_cycles": 3, "max_sprints": 5},
         "budget": {
             "max_agent_runs_per_sprint": 30,
-            "max_tokens_per_sprint": 3000000,
+            "max_tokens_per_sprint": 6000000,
             "meeting": "involved",
             "reviews": "batched",
             "reuse_reviewers": True,
+            "reuse_max_context": 40000,
             "verify": "sprint-end",
             "tests_first": True,
         },
@@ -41,10 +48,11 @@ PROFILES = {
         "limits": {"parallel_agents": 4, "features_per_sprint": 2, "rework_cycles": 3, "max_sprints": 8},
         "budget": {
             "max_agent_runs_per_sprint": 60,
-            "max_tokens_per_sprint": 8000000,
+            "max_tokens_per_sprint": 12000000,
             "meeting": "full",
             "reviews": "every",
             "reuse_reviewers": False,
+            "reuse_max_context": 60000,
             "verify": "per-feature",
             "tests_first": True,
         },
@@ -73,6 +81,7 @@ ROLES = (
     "game-designer", "art-director", "architect", "artist", "developer", "qa",
     "sound-designer", "narrative-designer", "level-designer",
 )
+PRODUCER = "producer"
 
 WARN_SHARE = 0.8
 
@@ -164,7 +173,7 @@ def command_profile(studio, args):
 def command_route(studio, args):
     profile = args.profile or studio.profile()
     model, effort = route(profile, args.role, args.mode, args.escalate)
-    print(f"claude={model} codex={effort}")
+    print(f"model={model} effort={effort}")
 
 
 def command_routes(studio, args):
@@ -176,34 +185,46 @@ def command_routes(studio, args):
         CONTENT: "sound, narrative, level PREPRO/WORK/FIX",
         REPLY: "MEETING replies",
     }
-    print(f"profile {profile} (escalation after the rework limit: claude={ESCALATED[0]} codex={ESCALATED[1]})")
+    print(f"profile {profile} (escalation after the rework limit: model={ESCALATED[0]} effort={ESCALATED[1]})")
     for group, label in groups.items():
         model, effort = ROUTES[group][profile]
-        print(f"  {group:<8} claude={model:<7} codex={effort:<7} {label}")
+        print(f"  {group:<8} model={model:<7} effort={effort:<7} {label}")
 
 
-def command_log(studio, args):
-    if args.role not in ROLES:
-        raise BudgetError(f"unknown role {args.role!r}")
+def log_run(studio, role, mode, tasks=(), tokens=None, model="", agent="", sprint=None):
+    if role not in ROLES and role != PRODUCER:
+        raise BudgetError(f"unknown role {role!r}")
     entry = {
         "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "sprint": args.sprint if args.sprint is not None else studio.current_sprint(),
-        "role": args.role,
-        "mode": args.mode,
-        "tasks": [item.strip() for item in (args.tasks or "").split(",") if item.strip()],
-        "tokens": args.tokens,
-        "model": args.model or "",
+        "sprint": sprint if sprint is not None else studio.current_sprint(),
+        "role": role,
+        "mode": mode,
+        "tasks": list(tasks),
+        "tokens": tokens,
+        "model": model or "",
     }
+    if agent:
+        entry["agent"] = agent
     studio.log_path.parent.mkdir(parents=True, exist_ok=True)
     with studio.log_path.open("a", encoding="utf-8") as file:
         file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return entry
+
+
+def command_log(studio, args):
+    entry = log_run(
+        studio, args.role, args.mode,
+        tasks=[item.strip() for item in (args.tasks or "").split(",") if item.strip()],
+        tokens=args.tokens, model=args.model, sprint=args.sprint,
+    )
     print(f"logged: S{entry['sprint']} {args.role} {args.mode} tokens={args.tokens if args.tokens is not None else '?'}")
 
 
 def spend(entries):
-    runs = len(entries)
+    """Agent runs (the producer's entries are not runs), all tokens, runs without tokens."""
+    runs = sum(1 for entry in entries if entry["role"] != PRODUCER)
     tokens = sum(entry["tokens"] for entry in entries if entry.get("tokens") is not None)
-    unknown = sum(1 for entry in entries if entry.get("tokens") is None)
+    unknown = sum(1 for entry in entries if entry.get("tokens") is None and entry["role"] != PRODUCER)
     return runs, tokens, unknown
 
 
@@ -232,18 +253,28 @@ def command_report(studio, args):
         print(f"  {role:<19} runs {role_runs:<3} tokens {role_tokens:,}")
 
 
-def command_check(studio, args):
-    sprint = args.sprint if args.sprint is not None else studio.current_sprint()
+def check(studio, next_runs, sprint=None):
+    """("OK" | "WARN" | "OVER", line) for the sprint with next_runs more agent runs."""
+    sprint = sprint if sprint is not None else studio.current_sprint()
     caps = studio.caps()
     runs, tokens, _ = spend(studio.entries(sprint))
-    planned_runs = runs + args.next
+    planned_runs = runs + next_runs
     run_cap = caps["max_agent_runs_per_sprint"]
     token_cap = caps["max_tokens_per_sprint"]
-    line = f"S{sprint}: runs {runs}+{args.next}/{run_cap}, tokens {tokens:,}/{token_cap:,}"
+    line = f"S{sprint}: runs {runs}+{next_runs}/{run_cap}, tokens {tokens:,}/{token_cap:,}"
     if planned_runs > run_cap or tokens >= token_cap:
+        return "OVER", line
+    if planned_runs >= run_cap * WARN_SHARE or tokens >= token_cap * WARN_SHARE:
+        return "WARN", line
+    return "OK", line
+
+
+def command_check(studio, args):
+    state, line = check(studio, args.next, args.sprint)
+    if state == "OVER":
         print(f"OVER BUDGET — {line}. Call an early gate.")
         sys.exit(1)
-    if planned_runs >= run_cap * WARN_SHARE or tokens >= token_cap * WARN_SHARE:
+    if state == "WARN":
         print(f"WARN — {line}. Over {int(WARN_SHARE * 100)}% of the sprint budget.")
         return
     print(f"OK — {line}")
@@ -273,7 +304,7 @@ def build_parser():
     log.add_argument("--role", required=True)
     log.add_argument("--mode", required=True)
     log.add_argument("--tasks", help="comma-separated task ids")
-    log.add_argument("--tokens", type=int, help="tokens the platform reported for the run")
+    log.add_argument("--tokens", type=int, help="weighted tokens of the run (tokens.py agent <id>)")
     log.add_argument("--model", help="model or effort used")
     log.add_argument("--sprint", type=int, help="defaults to the sprint in Studio/ledger.md")
     log.set_defaults(handler=command_log)

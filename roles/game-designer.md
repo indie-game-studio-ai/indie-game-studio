@@ -73,7 +73,8 @@ Input in `CONTEXT`: the sprint's features, the previous sprint's retro,
 - "Out of scope".
 
 Keep each spec within 100 lines and keep the per-role sections separate: every role
-reads only the story, the AC and its own section. Update `backlog.md`. Take proposals
+reads only the story, the AC and its own section. Keep the template's `##` headings in
+English, with the text under them in `LANG`: `board.py pack` cuts the spec by them. Update `backlog.md`. Take proposals
 from `proposals.md` only if they fit the GDD.
 
 ## MEETING_RESOLVE

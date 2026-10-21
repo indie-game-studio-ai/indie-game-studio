@@ -20,8 +20,9 @@ the rules they need. They open a section only when a question is not answered th
 | narrative-designer | `game-studio:narrative-designer` | `studio-narrative-designer` |
 | level-designer | `game-studio:level-designer` | `studio-level-designer` |
 
-Every agent defaults to Sonnet in Claude Code and medium effort in Codex. The producer
-picks the model for each run from the routing table (§14).
+Every agent defaults to Sonnet with medium effort in Claude Code and to medium effort
+in Codex. The producer picks the model and effort for each run from the routing table
+(§14).
 
 Only the producer talks to the user and writes the task board. Roles do not spawn other
 agents and do not talk to each other directly. Everything one role hands to another goes
@@ -42,7 +43,8 @@ user can change it at any time. The producer passes it to every agent as `LANG`.
 - Player-facing text lives in `Narrative/strings/<LANG>.json` as the primary locale.
   Other locales come from the GDD.
 - Templates are in English. When a role fills one in, it may translate the headings into
-  `LANG`.
+  `LANG`, except the ones tools read: the `##` headings of feature specs and the
+  `## Summary` heading of reports.
 
 ## 3. Game project layout
 
@@ -61,7 +63,8 @@ Studio/
   reports/S<n>/<T-NNN | W<k>>.<role>.md
   reviews/art/, reviews/code/
   tools/               studio tools (copied from the skill)
-  .state/              zone snapshots, test locks, budget log, command logs; internal
+  .state/              zone snapshots, test locks, budget log, command logs, context
+                       packs, the open wave and agent ids; internal
 Design/   GDD.md, backlog.md, features/F-NNN-<slug>.md, balance.md
 References/  Art Bible.md, palette.json, Art TODO.md, Audio TODO.md, mockups/
 Art/      source/ (sprite specs, SVG), export/ (final PNGs unless the engine sets its own folder)
@@ -105,9 +108,9 @@ QA/       test-plans/, reports/, bugs/B-NNN.md, screenshots/S<n>/
   },
   "budget": {
     "profile": "standard",
-    "max_agent_runs_per_sprint": 30, "max_tokens_per_sprint": 3000000,
+    "max_agent_runs_per_sprint": 30, "max_tokens_per_sprint": 6000000,
     "meeting": "involved", "reviews": "batched", "reuse_reviewers": true,
-    "verify": "sprint-end", "tests_first": true
+    "reuse_max_context": 40000, "verify": "sprint-end", "tests_first": true
   },
   "git": { "auto_commit": false },
   "autopilot": false
@@ -207,7 +210,8 @@ the user sees it at the gate.
 
 ## 6. Agent prompt
 
-The producer passes paths, never file contents:
+The producer passes paths, never file contents. In a sprint `waves.py start` prints
+these prompts ready to use:
 
 ```
 PROJECT=<absolute path to the game project>
@@ -217,6 +221,7 @@ LANG=<language code>
 PROFILE=<lean | standard | thorough>
 SPRINT=<n>
 TASKS=T-007[,T-008]                   (one task, or a batch of the same role and mode)
+PACK=Studio/.state/packs/S<n>-W<k>-<role>.md
 REPORT=<path, see SKILL.md>
 CONTEXT: <paths: reviews, bug reports, meeting files, user answers, stack profile>
 ```
@@ -224,6 +229,13 @@ CONTEXT: <paths: reviews, bug reports, meeting files, user answers, stack profil
 A batch is several tasks with the same role and mode in one run (`board.py next
 --batch`). The agent does all of them, writes one report and gives each task its own
 status in the summary.
+
+The **pack** (`board.py pack`) is one file with what the run needs, so the agent does
+not spend turns collecting it: the tasks with their description, done criteria and the
+last log lines; the player story, the AC and the role's own section of each feature
+spec (the whole spec for leads, developer and qa); the review section or bug report for
+each task in rework; and the list of other inputs to open only if needed. Sections
+are capped, and a cut ends with the `sed -n` range of the rest.
 
 ## 7. Role modes
 
@@ -245,25 +257,31 @@ the path to that review, bug or verdict. `MEETING` is a reply at the planning me
 
 ## 8. Report and summary
 
-The agent writes its full report to `REPORT`, at most 60 lines: what was done, files,
-how it was checked (command and condensed output), what is still doubtful.
-
-The summary for the producer is at most 15 lines in exactly this shape:
+The agent writes its report to `REPORT`, at most 60 lines: what was done, files, how it
+was checked (command and condensed output), what is still doubtful. The report starts
+with the summary, at most 15 lines in exactly this shape:
 
 ```
+## Summary
 STATUS: DONE | DONE_WITH_CONCERNS | NEEDS_INPUT | BLOCKED | APPROVE | CHANGES_REQUESTED | TEST_DISPUTE
 TASK: T-NNN
 FILES: path, path
 CHECK: command → result in one line
 HANDOFF: → <role>: <what to do or look at> (<paths>)
-NEW TASKS: <owner>/<mode>: <title> [deps: T-…] [reviewers: …]
+NEW TASKS: <owner>/<MODE>: <title> [deps: T-…] [reviewers: …]
 QUESTIONS: <blocking only; each with a recommended answer>
 ```
 
 For a batch, replace the first two lines with one line per task:
-`T-007: DONE`, `T-008: CHANGES_REQUESTED — R-2, R-3`.
+`T-007: DONE`, `T-008: CHANGES_REQUESTED — R-2, R-3`. Extra `NEW TASKS` or `QUESTIONS`
+items go on their own `- ` lines under the label. A new task outside this sprint's
+features gets `[later]` and lands in `Studio/proposals.md`. A task line may also carry
+`[feature: F-…]`, `[inputs: …]`, `[outputs: …]`, `[done: a; b]` and `[desc: …]`.
 
 Leave out empty lines. The labels stay in English; the text after them is in `LANG`.
+`waves.py finish` reads the summary from the report and moves the board, so the agent's
+final answer to the producer is one line: `<STATUS or per-task statuses> — <REPORT>`.
+That keeps the producer's context from growing by a summary per run.
 Status meanings:
 - `DONE` means done and checked. `DONE_WITH_CONCERNS` means done with a doubt that the
   report explains.
@@ -299,8 +317,10 @@ The meeting itself:
    ```
 3. game-designer (MEETING_RESOLVE) answers the questions, updates specs and AC and writes
    its own `game-designer.md` with the decisions.
-4. The producer writes `minutes.md` with decisions, tasks and dependencies, and creates
-   tasks from it.
+4. The producer writes `minutes.md` with the decisions and a `## Tasks` section of task
+   lines. A line may carry `[id: <key>]` so that other lines name it in `deps`. Then
+   `board.py import Studio/meetings/S<n>-planning/minutes.md` creates all the tasks at
+   once; it creates nothing if a line is wrong.
 
 ## 10. Reviews and acceptance
 
@@ -328,8 +348,8 @@ numbered `R-1…` with a severity: 🔴 blocks, 🟡 must fix, 🟢 advice. The 
 nothing. Any 🔴 or 🟡 means `CHANGES_REQUESTED`.
 
 A reviewer is never the author of the work. With `reuse_reviewers: true` the producer
-continues the same reviewer agent within a sprint; otherwise every review is a fresh
-agent.
+may continue the same reviewer agent within a sprint (§14 says when); otherwise every
+review is a fresh agent.
 
 ## 11. Write zones and the test lock
 
@@ -376,7 +396,11 @@ right checks at the right time, not from repeating them.
 | Features per sprint | 1 | 2 | 2 |
 | Rework rounds | 2 | 3 | 3 |
 | Agent runs per sprint | 15 | 30 | 60 |
-| Tokens per sprint | 1.2M | 3M | 8M |
+| Tokens per sprint (weighted, producer included) | 3M | 6M | 12M |
+| Continue an agent up to this context | 40K | 40K | 60K |
+
+The token caps are a first estimate from comparable runs. After a real sprint, compare
+them with `tokens.py report` and adjust `budget.max_tokens_per_sprint`.
 
 **Model routing** (`budget.py route <role> <mode>` or `budget.py routes`):
 
@@ -388,11 +412,38 @@ right checks at the right time, not from repeating them.
 | Content: sound, narrative, levels | Haiku / low | Sonnet / medium | Sonnet / medium |
 | MEETING replies | Haiku / low | Haiku / low | Sonnet / medium |
 
-A task past its rework limit goes to Opus / high once.
+A task past its rework limit goes to Opus / high once. In Claude Code the producer
+passes both the model and the effort to `Agent`; in Codex the effort.
 
-**Spend.** After every agent run the producer records it with `budget.py log` (with the
-token count when the platform reports one). Before every wave it runs `budget.py
-check --next <runs>`. Over the cap means an early gate.
+**Where the tokens go.** Measured on comparable multi-agent runs:
+- Every request of an agent re-sends what the agent started with. A Claude Code
+  subagent that inherits the session's tools also inherits the list of every skill and
+  MCP tool the user has: 21.9K tokens before the first word, against 7.6K with the
+  explicit tool list the studio agents have. That start was 42–83% of all agent input.
+- The producer was 32–72% of a session's spend. Every bookkeeping command is a request
+  that re-sends the producer's whole context, which grows all session long.
+
+So:
+- **Agents** have an explicit tool list and medium effort (`scripts/build.py`); they
+  never inherit the session's tools or effort.
+- **Packs** replace the turns an agent spends collecting its context (§6).
+- **Waves** take two producer calls: `waves.py start` and `waves.py finish`. Agents answer
+  in one line; the summary stays in the report, where `waves.py finish` reads it.
+- **Continue an agent** only within the sprint, on the same model, and while its last
+  context is at most `budget.reuse_max_context`. A continued agent re-sends its whole
+  context on every request, and after 5 idle minutes the cache is gone and it is written
+  again at 1.25×. Past the limit a fresh agent with a pack is cheaper. `waves.py start`
+  decides and prints `continue agent <id>` or `new agent`.
+
+**Spend.** Tokens are weighted, input-equivalent tokens: input ×1, cache write ×1.25
+(×2 for 1 h), cache read ×0.1, output ×5. In Claude Code `waves.py finish` reads each
+run's spend from its transcript by agent id, and the producer's spend since the last
+wave from the session transcript; it logs both with `budget.py log`. The
+`subagent_tokens` figure of `Agent` is only the last request's size, not the spend; pass
+it as `:<n>` only when there is no transcript. In Codex the runs are logged without
+tokens and only the run cap applies. `waves.py start` stops with an early gate when the
+next wave would pass the cap. `tokens.py report` shows the whole session: producer,
+every run, the start prefix share and files read more than once.
 
 **Running commands.** Every project command goes through
 `python3 Studio/tools/quiet.py "<command>"`. The full output lands in

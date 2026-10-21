@@ -189,6 +189,51 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(summary, [{"feature": "F-001", "done": 2, "total": 2, "accepted": True,
                                     "rework": 0, "blocked": []}])
 
+    def test_import_creates_every_task_or_none(self):
+        minutes = self.project / "Studio" / "minutes.md"
+        minutes.write_text(
+            "# Minutes\n\n## Decisions\n- one feature\n\n## Tasks\n"
+            "- architect/PLAN: Plan [id: plan] [feature: F-001]\n"
+            "- developer/WORK: Build [deps: plan] [reviewers: architect] [feature: F-001] [done: builds; tests pass]\n"
+            "- sound-designer/WORK: Theme [later]\n\n## Notes\n- not a task\n",
+            encoding="utf-8",
+        )
+        out = self.board("import", "Studio/minutes.md").stdout
+        self.assertIn("T-001 architect/PLAN: Plan", out)
+        self.assertIn("T-002 developer/WORK: Build deps T-001", out)
+        self.assertIn("proposals.md: +1", out)
+        self.assertIn("## Done when\n- builds\n- tests pass", self.task_text("T-002"))
+        self.assertIn("sound-designer/WORK: Theme [later]", (self.project / "Studio" / "proposals.md").read_text(encoding="utf-8"))
+
+        bad = self.project / "Studio" / "bad.md"
+        bad.write_text("## Tasks\n- qa/WRITE_TESTS: Tests\n- developer/WORK: Fix [deps: nowhere]\n", encoding="utf-8")
+        result = self.board("import", "Studio/bad.md", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown dependency nowhere", result.stderr)
+        self.assertFalse((self.project / "Studio" / "tasks" / "T-003.md").exists())
+
+    def test_pack_holds_the_task_and_the_role_part_of_the_spec(self):
+        spec = self.project / "Design" / "features" / "F-001-ship.md"
+        spec.parent.mkdir(parents=True)
+        spec.write_text(
+            "# F-001\n\n## Player story\nI fly.\n\n## AC\n" + "".join(f"- AC-{n}: rule {n}\n" for n in range(1, 81))
+            + "\n## Assets\n- ship.png\n\n## Sounds\n- SOUND-MARKER\n",
+            encoding="utf-8",
+        )
+        task_id = self.new("--owner", "artist", "--mode", "WORK", "--title", "Ship", "--feature", "F-001",
+                           "--inputs", "References/Art Bible.md", "--done-when", "PNG exported")
+        out = self.board("pack", task_id).stdout
+        self.assertIn("Studio/.state/packs/T-001.md", out)
+        pack = (self.project / "Studio" / ".state" / "packs" / "T-001.md").read_text(encoding="utf-8")
+        self.assertIn("# Pack: artist WORK T-001", pack)
+        self.assertIn("- PNG exported", pack)
+        self.assertIn("AC-59: rule 59", pack)
+        self.assertNotIn("AC-60: rule 60", pack)
+        self.assertIn("… cut; the rest: sed -n '66,86p'", pack)
+        self.assertIn("- ship.png", pack)
+        self.assertNotIn("SOUND-MARKER", pack)
+        self.assertIn("## Open only if needed\n\n- References/Art Bible.md", pack)
+
 
 if __name__ == "__main__":
     unittest.main()

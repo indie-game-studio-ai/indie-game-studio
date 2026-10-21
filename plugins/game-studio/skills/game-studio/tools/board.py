@@ -68,6 +68,30 @@ TASK_FILE = re.compile(r"^T-(\d+)\.md$")
 LOG_HEADER = "## Log"
 REVIEW_FILE_IN_LOG = re.compile(r"CHANGES_REQUESTED.*\((Studio/[^)]+\.md)\)")
 
+# "<owner>/<MODE>: <title> [deps: T-1, T-2] [reviewers: …] [later]" — the NEW TASKS line
+# of a summary and a line of the "## Tasks" section of the meeting minutes.
+TASK_LINE = re.compile(
+    r"^\s*(?:[-*]\s+|\d+[.)]\s+)?`?(?P<owner>[a-z][a-z-]*)\s*/\s*(?P<mode>[A-Z_]+)`?\s*:\s*(?P<rest>.+?)\s*$"
+)
+TASK_OPTION = re.compile(r"\[(?P<key>[a-z_]+)(?:\s*:\s*(?P<value>[^\]]*))?\]")
+TASK_OPTION_KEYS = {"deps", "reviewers", "feature", "inputs", "outputs", "done", "desc", "id", "later"}
+TASK_ID = re.compile(r"^(?:T-)?\d+$")
+BUG_ID = re.compile(r"\bB-\d+\b")
+
+# Every role reads the player story and the AC; content roles read only their own
+# section on top. Other roles get the whole spec, which is at most 100 lines.
+SPEC_ALWAYS = ("player story", "ac")
+SPEC_SECTIONS = {
+    "artist": ("assets",),
+    "art-director": ("assets",),
+    "sound-designer": ("sounds",),
+    "narrative-designer": ("texts",),
+    "level-designer": ("levels",),
+}
+SECTION_MAX_LINES = 60
+PACK_MAX_LINES = 300
+PACK_LOG_LINES = 5
+
 
 class BoardError(Exception):
     pass
@@ -305,39 +329,164 @@ def ready_items(board, sprint=None):
     return sorted(items, key=order)
 
 
-def command_new(board, args):
-    check_role(args.owner)
-    check_mode(args.owner, args.mode)
-    reviewers = parse_list(args.reviewers or "")
+def check_new_task(owner, mode, reviewers):
+    check_role(owner)
+    check_mode(owner, mode)
     for reviewer in reviewers:
         check_role(reviewer)
-    task_id = board.next_id()
-    sprint = args.sprint if args.sprint is not None else board.current_sprint()
+        if reviewer == owner:
+            raise BoardError(f"{owner} cannot review its own work")
+
+
+def create_task(board, owner, mode, title, sprint, task_id=None, feature="", deps=(), reviewers=(),
+                inputs=(), outputs=(), desc="", done_when=()):
+    check_new_task(owner, mode, reviewers)
+    task_id = task_id or board.next_id()
     meta = {
         "id": task_id,
-        "title": " ".join(args.title.split()),
-        "feature": args.feature or "",
+        "title": " ".join(title.split()),
+        "feature": feature or "",
         "sprint": sprint,
-        "owner": args.owner,
-        "mode": args.mode,
+        "owner": owner,
+        "mode": mode,
         "status": "todo",
-        "deps": [normalize_id(dep) for dep in parse_list(args.deps or "")],
-        "reviewers": reviewers,
+        "deps": [normalize_id(dep) for dep in deps],
+        "reviewers": list(reviewers),
         "approvals": [],
-        "inputs": parse_list(args.inputs or ""),
-        "outputs": parse_list(args.outputs or ""),
+        "inputs": list(inputs),
+        "outputs": list(outputs),
         "rework": 0,
     }
-    done_when = [item.strip() for item in (args.done_when or "").split(";") if item.strip()]
     done_block = "\n".join(f"- {item}" for item in done_when) or "- —"
     body = (
-        f"\n## Description\n{(args.desc or '—').strip()}\n\n"
+        f"\n## Description\n{(desc or '—').strip()}\n\n"
         f"## Done when\n{done_block}\n\n"
         f"{LOG_HEADER}\n- S{sprint} producer: created\n"
     )
     board.tasks_dir.mkdir(parents=True, exist_ok=True)
-    Task(board.tasks_dir / f"{task_id}.md", meta, body).save()
-    print(task_id)
+    task = Task(board.tasks_dir / f"{task_id}.md", meta, body)
+    task.save()
+    return task
+
+
+def command_new(board, args):
+    task = create_task(
+        board, args.owner, args.mode, args.title,
+        sprint=args.sprint if args.sprint is not None else board.current_sprint(),
+        feature=args.feature,
+        deps=parse_list(args.deps or ""),
+        reviewers=parse_list(args.reviewers or ""),
+        inputs=parse_list(args.inputs or ""),
+        outputs=parse_list(args.outputs or ""),
+        desc=args.desc,
+        done_when=[item.strip() for item in (args.done_when or "").split(";") if item.strip()],
+    )
+    print(task.id)
+
+
+def parse_task_line(line):
+    """A task line as a dict, or None if the line is not one."""
+    match = TASK_LINE.match(line)
+    if not match:
+        return None
+    options = {}
+    for option in TASK_OPTION.finditer(match.group("rest")):
+        key = option.group("key")
+        if key not in TASK_OPTION_KEYS:
+            raise BoardError(f"unknown option [{key}] in {line.strip()!r}")
+        options[key] = (option.group("value") or "").strip()
+    title = TASK_OPTION.sub("", match.group("rest")).strip(" —–-\t")
+    if not title:
+        raise BoardError(f"no title in {line.strip()!r}")
+    return {
+        "owner": match.group("owner"),
+        "mode": match.group("mode"),
+        "title": title,
+        "key": options.get("id", ""),
+        "later": "later" in options,
+        "feature": options.get("feature", ""),
+        "deps": parse_list(options.get("deps", "")),
+        "reviewers": parse_list(options.get("reviewers", "")),
+        "inputs": parse_list(options.get("inputs", "")),
+        "outputs": parse_list(options.get("outputs", "")),
+        "desc": options.get("desc", ""),
+        "done_when": [item.strip() for item in options.get("done", "").split(";") if item.strip()],
+        "line": line.strip().lstrip("-*").strip(),
+    }
+
+
+def create_tasks(board, specs, sprint, feature="", source="producer"):
+    """Creates task lines all or nothing. Deps may name T-NNN or the [id: key] of another
+    line. [later] lines go to Studio/proposals.md. Returns (created tasks, proposals)."""
+    now = [spec for spec in specs if not spec["later"]]
+    later = [spec for spec in specs if spec["later"]]
+    existing = {task.id for task in board.load()}
+    number = int(board.next_id()[2:])
+    keys = {}
+    for spec in now:
+        spec["id"] = f"T-{number:03d}"
+        number += 1
+        if spec["key"]:
+            if spec["key"] in keys:
+                raise BoardError(f"duplicate [id: {spec['key']}]")
+            keys[spec["key"]] = spec["id"]
+    for spec in now:
+        check_new_task(spec["owner"], spec["mode"], spec["reviewers"])
+        resolved = []
+        for dep in spec["deps"]:
+            if dep in keys:
+                resolved.append(keys[dep])
+            elif TASK_ID.match(dep) and normalize_id(dep) in existing | set(keys.values()):
+                resolved.append(normalize_id(dep))
+            else:
+                raise BoardError(f"{spec['line']!r}: unknown dependency {dep}")
+        spec["deps"] = resolved
+    created = [
+        create_task(
+            board, spec["owner"], spec["mode"], spec["title"], sprint, task_id=spec["id"],
+            feature=spec["feature"] or feature, deps=spec["deps"], reviewers=spec["reviewers"],
+            inputs=spec["inputs"], outputs=spec["outputs"], desc=spec["desc"], done_when=spec["done_when"],
+        )
+        for spec in now
+    ]
+    if later:
+        proposals = board.project / "Studio" / "proposals.md"
+        text = proposals.read_text(encoding="utf-8") if proposals.is_file() else "# Proposals\n"
+        text = text.rstrip("\n") + "\n" + "".join(f"- S{sprint} {source}: {spec['line']}\n" for spec in later)
+        proposals.parent.mkdir(parents=True, exist_ok=True)
+        proposals.write_text(text, encoding="utf-8")
+    return created, later
+
+
+def task_lines(text):
+    lines = text.splitlines()
+    start = next((index for index, line in enumerate(lines) if line.strip().lower() == "## tasks"), None)
+    if start is None:
+        raise BoardError("no '## Tasks' section")
+    result = []
+    for line in lines[start + 1:]:
+        if line.startswith("## "):
+            break
+        if not line.strip() or not re.match(r"^\s*(?:[-*]|\d+[.)])\s", line):
+            continue
+        spec = parse_task_line(line)
+        if spec is None:
+            raise BoardError(f"not a task line: {line.strip()!r}")
+        result.append(spec)
+    return result
+
+
+def command_import(board, args):
+    path = Path(args.file)
+    path = path if path.is_absolute() else board.project / path
+    specs = task_lines(path.read_text(encoding="utf-8"))
+    sprint = args.sprint if args.sprint is not None else board.current_sprint()
+    created, later = create_tasks(board, specs, sprint, feature=args.feature or "", source=path.name)
+    for task in created:
+        deps = f" deps {', '.join(task.get('deps'))}" if task.get("deps") else ""
+        print(f"{task.id} {task.get('owner')}/{task.get('mode')}: {task.get('title')}{deps}")
+    if later:
+        print(f"proposals.md: +{len(later)}")
 
 
 def batch_items(items):
@@ -401,37 +550,45 @@ def command_finish(board, args):
         if task.get("status") not in ("todo", "doing", "changes"):
             raise BoardError(f"{task.id}: finish works from todo, doing or changes, now {task.get('status')}")
     for task in tasks:
-        task.meta["approvals"] = []
-        change_status(task, "review" if task.get("reviewers") else "done")
-        task.save()
+        finish_task(task)
         print(f"{task.id}: {task.get('status')}")
+
+
+def finish_task(task):
+    task.meta["approvals"] = []
+    change_status(task, "review" if task.get("reviewers") else "done")
+    task.save()
 
 
 def split_ids(raw_ids):
     return [task_id for raw in raw_ids for task_id in parse_list(raw)]
 
 
-def command_review(board, args):
-    task = board.find(args.id)
+def record_review(task, reviewer, verdict, file=None):
     if task.get("status") != "review":
         raise BoardError(f"{task.id}: a review is possible only in status review, now {task.get('status')}")
-    if args.reviewer not in task.get("reviewers"):
-        raise BoardError(f"{task.id}: {args.reviewer} is not a reviewer of this task")
-    source = f" ({args.file})" if args.file else ""
-    if args.verdict == "approve":
+    if reviewer not in task.get("reviewers"):
+        raise BoardError(f"{task.id}: {reviewer} is not a reviewer of this task")
+    source = f" ({file})" if file else ""
+    if verdict == "approve":
         approvals = task.get("approvals")
-        if args.reviewer not in approvals:
-            approvals.append(args.reviewer)
+        if reviewer not in approvals:
+            approvals.append(reviewer)
         task.meta["approvals"] = approvals
-        task.log(producer_line(task, f"{args.reviewer} — APPROVE{source}"))
+        task.log(producer_line(task, f"{reviewer} — APPROVE{source}"))
         if set(task.get("reviewers")) <= set(approvals):
             change_status(task, "done")
     else:
         task.meta["approvals"] = []
         task.meta["rework"] = task.get("rework") + 1
-        task.log(producer_line(task, f"{args.reviewer} — CHANGES_REQUESTED, rework {task.get('rework')}{source}"))
+        task.log(producer_line(task, f"{reviewer} — CHANGES_REQUESTED, rework {task.get('rework')}{source}"))
         change_status(task, "changes")
     task.save()
+
+
+def command_review(board, args):
+    task = board.find(args.id)
+    record_review(task, args.reviewer, args.verdict, args.file)
     print(f"{task.id}: {task.get('status')}")
 
 
@@ -485,11 +642,15 @@ def command_set(board, args):
     print(f"{task.id}: " + "; ".join(changes))
 
 
+def block_task(task, reason):
+    task.meta["status"] = "blocked"
+    task.log(producer_line(task, f"blocked: {reason}"))
+    task.save()
+
+
 def command_block(board, args):
     task = board.find(args.id)
-    task.meta["status"] = "blocked"
-    task.log(producer_line(task, f"blocked: {args.reason}"))
-    task.save()
+    block_task(task, args.reason)
     print(f"{task.id}: blocked")
 
 
@@ -665,6 +826,141 @@ def command_summary(board, args):
         )
 
 
+def markdown_sections(text):
+    """[(heading, first line number, lines)] for every '## ' section; the part before the
+    first heading has the heading ''."""
+    sections = [("", 1, [])]
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.startswith("## "):
+            sections.append((line[3:].strip(), number, [line]))
+        else:
+            sections[-1][2].append(line)
+    return sections
+
+
+def capped(lines, path, first_line, limit=SECTION_MAX_LINES):
+    lines = [line for line in lines]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if len(lines) <= limit:
+        return lines
+    cut = first_line + limit
+    end = first_line + len(lines) - 1
+    return lines[:limit] + [f"… cut; the rest: sed -n '{cut},{end}p' \"{path}\""]
+
+
+def heading_matches(heading, names):
+    heading = re.sub(r"[^a-z ]", "", heading.lower()).strip()
+    return any(heading == name or heading.startswith(name + " ") for name in names)
+
+
+def spec_slice(board, feature, role):
+    folder = board.project / "Design" / "features"
+    specs = sorted(folder.glob(f"{feature}*.md")) if feature and folder.is_dir() else []
+    if not specs:
+        return None, []
+    path = specs[0]
+    relative = str(path.relative_to(board.project))
+    text = path.read_text(encoding="utf-8")
+    names = SPEC_SECTIONS.get(role)
+    if names is None:
+        return relative, capped(text.splitlines(), relative, 1, limit=PACK_MAX_LINES // 2)
+    wanted = SPEC_ALWAYS + names
+    lines = []
+    for heading, first, body in markdown_sections(text):
+        if heading and heading_matches(heading, wanted):
+            lines += capped(body, relative, first) + [""]
+    # Translated headings do not match: the whole spec is better than nothing.
+    if not lines:
+        return relative, capped(text.splitlines(), relative, 1, limit=PACK_MAX_LINES // 2)
+    return relative, lines
+
+
+def task_section(board, path, task_id):
+    """The part of a review or bug file about one task: its section in a batch file, or
+    the whole file."""
+    relative = str(path.relative_to(board.project))
+    text = path.read_text(encoding="utf-8")
+    for heading, first, body in markdown_sections(text):
+        if heading and re.search(rf"\b{re.escape(task_id)}\b", heading):
+            return capped(body, relative, first)
+    return capped(text.splitlines(), relative, 1)
+
+
+def task_block(task):
+    lines = [
+        f"## {task.id}: {task.get('title')}",
+        f"feature {task.get('feature') or '—'} · {task.get('owner')} {task.get('mode')} · "
+        f"status {task.get('status')} · rework {task.get('rework')}",
+    ]
+    for key in ("inputs", "outputs", "reviewers", "deps"):
+        if task.get(key):
+            lines.append(f"{key}: {', '.join(task.get(key))}")
+    body_sections = {heading.lower(): body for heading, _, body in markdown_sections(task.body)}
+    for heading in ("description", "done when"):
+        body = [line for line in body_sections.get(heading, [])[1:] if line.strip()]
+        if body:
+            lines += ["", f"### {heading.capitalize()}"] + body
+    log = [line for line in body_sections.get("log", [])[1:] if line.strip()]
+    if len(log) > 1:
+        lines += ["", f"### Log (last {min(len(log), PACK_LOG_LINES)})"] + log[-PACK_LOG_LINES:]
+    return lines
+
+
+def build_pack(board, ids, role=None, mode=None, context=()):
+    tasks = [board.find(task_id) for task_id in ids]
+    role = role or tasks[0].get("owner")
+    mode = mode or (FIX_MODE if tasks[0].get("status") == "changes" else tasks[0].get("mode"))
+    lines = [
+        f"# Pack: {role} {mode} {', '.join(task.id for task in tasks)}",
+        "",
+        "Built by board.py pack. Read it first: it holds your tasks, their AC and your part of",
+        "the spec. Open a listed file only for what the pack does not answer.",
+        "",
+    ]
+    inlined = set()
+    for task in tasks:
+        lines += task_block(task) + [""]
+    for feature in dict.fromkeys(task.get("feature") for task in tasks if task.get("feature")):
+        path, spec = spec_slice(board, feature, role)
+        if path:
+            inlined.add(path)
+            lines += [f"## Spec {feature} ({path})", ""] + spec + [""]
+    for task in tasks:
+        sources = latest_review_context(board, task) if task.get("status") == "changes" or mode == FIX_MODE else []
+        bugs_dir = board.project / "QA" / "bugs"
+        for bug in dict.fromkeys(BUG_ID.findall(task.get("title") + "\n" + task.body)):
+            sources += [str(path.relative_to(board.project)) for path in sorted(bugs_dir.glob(f"{bug}*.md"))]
+        for source in dict.fromkeys(sources):
+            path = board.project / source
+            if not path.is_file():
+                continue
+            inlined.add(source)
+            lines += [f"## For {task.id}: {source}", ""] + task_section(board, path, task.id) + [""]
+    others = [
+        path for task in tasks for path in task.get("inputs") if path not in inlined
+    ] + [path for path in context if path not in inlined]
+    if others:
+        lines += ["## Open only if needed", ""] + [f"- {path}" for path in dict.fromkeys(others)] + [""]
+    if len(lines) > PACK_MAX_LINES:
+        lines = lines[:PACK_MAX_LINES] + ["… the pack is cut; open the sources above for the rest"]
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def pack_path(board, name):
+    return board.project / "Studio" / ".state" / "packs" / f"{name}.md"
+
+
+def command_pack(board, args):
+    ids = split_ids(args.ids)
+    text = build_pack(board, ids, args.role, args.mode, parse_list(args.context or ""))
+    target = Path(args.out) if args.out else pack_path(board, "-".join(ids))
+    target = target if target.is_absolute() else board.project / target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    print(f"{target.relative_to(board.project)}: {text.count(chr(10))} lines")
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="Studio task board (Studio/tasks).")
     parser.add_argument("--project", default=".", help="game project root (default: current directory)")
@@ -727,6 +1023,20 @@ def build_parser():
     log.add_argument("id", help="task id")
     log.add_argument("text", help="entry text")
     log.set_defaults(handler=command_log)
+
+    import_parser = sub.add_parser("import", help="create every task of a '## Tasks' section at once")
+    import_parser.add_argument("file", help="e.g. Studio/meetings/S1-planning/minutes.md")
+    import_parser.add_argument("--sprint", type=int, help="defaults to the sprint in Studio/ledger.md")
+    import_parser.add_argument("--feature", help="feature for lines without [feature: …]")
+    import_parser.set_defaults(handler=command_import)
+
+    pack = sub.add_parser("pack", help="one file with what an agent run needs: tasks, AC, its part of the spec, reviews")
+    pack.add_argument("ids", nargs="+", help="task ids of the run")
+    pack.add_argument("--role", help="defaults to the owner of the first task")
+    pack.add_argument("--mode", help="defaults to the task mode, FIX for tasks in changes")
+    pack.add_argument("--context", help="comma-separated extra paths to list")
+    pack.add_argument("--out", help="defaults to Studio/.state/packs/<ids>.md")
+    pack.set_defaults(handler=command_pack)
 
     render = sub.add_parser("render", help="build Studio/BOARD.md")
     render.set_defaults(handler=command_render)

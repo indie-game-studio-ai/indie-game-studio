@@ -26,8 +26,16 @@ class BuildTest(unittest.TestCase):
         for role in ROLES:
             claude_agent = (ROOT / "plugins" / "game-studio" / "agents" / f"{role}.md").read_text(encoding="utf-8")
             self.assertIn(f"name: {role}\n", claude_agent)
+            self.assertIn("effort: medium\n", claude_agent)
+            self.assertIn("tools: Read, Write, Edit, Bash, Glob, Grep", claude_agent)
+            self.assertNotIn("Agent", claude_agent.split("---", 2)[1].split("tools:", 1)[1].splitlines()[0])
             self.assertIn("## Common role rules", claude_agent)
             self.assertTrue((ROOT / "codex" / "agents" / f"studio-{role}.toml").exists())
+
+    def test_only_the_architect_gets_web_tools(self):
+        for role in ROLES:
+            claude_agent = (ROOT / "plugins" / "game-studio" / "agents" / f"{role}.md").read_text(encoding="utf-8")
+            self.assertEqual("WebSearch" in claude_agent.split("---", 2)[1], role == "architect", role)
 
     @unittest.skipIf(tomllib is None, "tomllib is available from Python 3.11")
     def test_codex_agents_are_valid_toml(self):
@@ -38,6 +46,14 @@ class BuildTest(unittest.TestCase):
             self.assertTrue(agent["description"])
             self.assertEqual(agent["model_reasoning_effort"], "medium")
             self.assertIn("## Common role rules", agent["developer_instructions"])
+
+    @unittest.skipIf(not hasattr(sys, "stdlib_module_names"), "sys.stdlib_module_names is available from Python 3.10")
+    def test_no_tool_shadows_a_standard_module(self):
+        # A tool runs with its own folder first on sys.path: a tool named like a standard
+        # module would replace it for every other tool (wave.py broke sfx.py this way).
+        tools = ROOT / "plugins" / "game-studio" / "skills" / "game-studio" / "tools"
+        clashes = [path.name for path in tools.glob("*.py") if path.stem in sys.stdlib_module_names]
+        self.assertEqual(clashes, [])
 
     def test_protocol_lists_every_role(self):
         protocol = (ROOT / "plugins" / "game-studio" / "skills" / "game-studio" / "references" / "protocol.md").read_text(encoding="utf-8")

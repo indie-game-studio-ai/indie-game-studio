@@ -57,7 +57,7 @@ class BudgetCliTest(unittest.TestCase):
 
     def test_template_starts_on_the_standard_profile(self):
         self.assertEqual(self.config()["budget"]["profile"], "standard")
-        self.assertIn("claude=opus", self.budget("route", "game-designer", "ACCEPT").stdout)
+        self.assertEqual(self.budget("route", "game-designer", "ACCEPT").stdout.strip(), "model=opus effort=high")
 
     def test_profile_rewrites_limits_and_budget(self):
         result = self.budget("profile", "lean")
@@ -68,7 +68,7 @@ class BudgetCliTest(unittest.TestCase):
         self.assertEqual(config["limits"]["features_per_sprint"], 1)
         self.assertEqual(config["limits"]["rework_cycles"], 2)
         self.assertEqual((config["budget"]["verify"], config["budget"]["tests_first"]), ("sprint-end", False))
-        self.assertIn("claude=sonnet", self.budget("route", "game-designer", "ACCEPT").stdout)
+        self.assertIn("model=sonnet effort=medium", self.budget("route", "game-designer", "ACCEPT").stdout)
 
     def test_check_stops_the_sprint_at_the_cap(self):
         self.budget("profile", "lean")
@@ -82,10 +82,17 @@ class BudgetCliTest(unittest.TestCase):
 
     def test_check_stops_on_tokens_and_counts_only_the_sprint(self):
         self.budget("profile", "lean")
-        self.budget("log", "--role", "artist", "--mode", "WORK", "--tokens", "900000", "--sprint", "1")
+        self.budget("log", "--role", "artist", "--mode", "WORK", "--tokens", "2900000", "--sprint", "1")
         self.assertEqual(self.budget("check").returncode, 0)
-        self.budget("log", "--role", "artist", "--mode", "WORK", "--tokens", "1300000")
+        self.budget("log", "--role", "artist", "--mode", "WORK", "--tokens", "3100000")
         self.assertEqual(self.budget("check").returncode, 1)
+
+    def test_producer_spend_counts_tokens_but_not_runs(self):
+        self.budget("profile", "lean")
+        self.budget("log", "--role", "producer", "--mode", "WAVE", "--tokens", "3000000")
+        over = self.budget("check", "--next", "1")
+        self.assertEqual(over.returncode, 1)
+        self.assertIn("runs 0+1/15", over.stdout)
 
     def test_report_sums_runs_and_tokens_by_role(self):
         self.budget("log", "--role", "developer", "--mode", "WORK", "--tokens", "50000")

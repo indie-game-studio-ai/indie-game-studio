@@ -36,15 +36,16 @@ in Codex.
 
 | Action | Claude Code | Codex |
 |---|---|---|
-| Launch a role | `Agent(subagent_type: "game-studio:<role>", model: <route>, description, prompt)` | `spawn_agent` with agent `studio-<role>`, `reasoning_effort: <route>`, the prompt as its message |
+| Launch a role | `Agent(subagent_type: "game-studio:<role>", model: <model>, effort: <effort>, description, prompt)` | `spawn_agent` with agent `studio-<role>`, `reasoning_effort: <effort>`, the prompt as its message |
 | Parallel wave | several `Agent` calls in one message, then wait for all notifications | several `spawn_agent` calls, then `wait_agent` on all of them |
 | Continue an agent | `SendMessage(to: <id>)`; it is a deferred tool, load it with `ToolSearch("select:SendMessage")` | `send_input` to the same agent |
 | Ask the user | write the round as text and end your turn; up to 4 closed questions may use `AskUserQuestion` | write the round as text and end your turn |
-| Tokens of a run | the `subagent_tokens`/usage the platform reports for the agent | not reported: log the run without tokens |
+| Agent id for `waves.py finish` | `agentId` in the `Agent` result; the spend is read from its transcript | the id `spawn_agent` returns; tokens are not reported |
 | `SKILL_DIR` | `${CLAUDE_SKILL_DIR}` | the folder you read this SKILL.md from (`realpath`) |
 
-`<route>` comes from `python3 Studio/tools/budget.py route <role> <mode>`. It prints
-`claude=<model> codex=<effort>`.
+`waves.py start` prints the model and effort of every run. For a run outside a wave
+take them from `python3 Studio/tools/budget.py route <role> <mode>`, which prints
+`model=<model> effort=<effort>`.
 
 If the custom agents are missing:
 - in Codex, offer the installer:
@@ -54,68 +55,70 @@ If the custom agents are missing:
 
 ## Token economy
 
-The full rules are in `Studio/PROTOCOL.md` §14. Your part:
+The full rules are in `Studio/PROTOCOL.md` §14. The two biggest costs are every
+agent's start, which each of its requests re-sends, and your own context, which every
+one of your tool calls re-sends. Your part:
 
 1. **Budget profile.** `lean`, `standard` or `thorough` sets the meeting format, the
    review policy, when tests are written and run, the limits and the per-sprint caps.
    Apply it with `budget.py profile <name>` and follow `studio.json → budget`.
-2. **Right model per run.** Take the model from `budget.py route` for every launch.
-   Never launch on the default when the route says otherwise, and never run a role
-   on the main session's model.
-3. **Batches.** Take ready work with `board.py next --batch`: one agent run per role
-   and mode covers all of its ready tasks. A reviewer reviews its whole batch in one
-   run.
-4. **Reuse.** Continue makers within a sprint. Continue reviewers too when
-   `reuse_reviewers` is true. A continued agent has its context, so give it only the
-   new header.
-5. **Count.** After each run: `budget.py log --role <r> --mode <m> --tasks <ids>
-   [--tokens N]`. Before each wave: `budget.py check --next <runs>`. Exit 1 means an
-   early gate.
-6. **Tests at the end.** Full test runs, the build and the screenshots happen in qa
+2. **Right model and effort per run.** Pass the ones `waves.py start` or `budget.py
+   route` prints. A role never inherits the main session's model or effort.
+3. **Waves in two calls.** `waves.py start` picks the batches, checks the budget,
+   snapshots the zones, starts the tasks, builds a context pack per run and prints the
+   prompts. `waves.py finish` does all the bookkeeping. Do not run those steps by hand.
+4. **Reuse only when it is cheaper.** Continue an agent only when `waves.py start` says
+   `continue agent <id>`; give it only the new header. Otherwise launch a new one.
+5. **Tests at the end.** Full test runs, the build and the screenshots happen in qa
    VERIFY; with `verify: sprint-end`, that is once per sprint for all features.
-7. **Keep your own context small.**
-   - Work from summaries and from short tool output: `board.py next --batch`,
-     `summary`, `budget.py report`.
-   - Do not print whole files. Open a full report only for a gate or a contradiction.
+6. **Keep your own context small.**
+   - Do not read reports, packs, specs or meeting replies. Act on the output of
+     `waves.py`, `board.py` and `budget.py`; open one report only for a gate or for a
+     line under "Needs you".
+   - Chain your own commands into one shell call where you can.
    - Pass paths to agents, never file contents.
    - After every sprint gate tell the user they can clear the context and start again:
      `/clear` in Claude Code or a new thread in Codex. You then resume from
-     `Studio/ledger.md`.
+     `Studio/ledger.md` and `waves.py status`.
 
 ## Guarantees
 
-1. Only you write the board, and only through `board.py`. Roles hand work over in their
-   summary (`HANDOFF`, `NEW TASKS`); you move it into the task logs.
-2. Write zones. Before a wave: `zones.py snapshot W<k>`. After it:
-   `zones.py verify W<k> --roles <wave roles>`. A violation voids the round: delete a
-   new file outside the zone, `git restore` a modified tracked file, show the user
-   anything else.
-3. Acceptance test lock. After the tests are written (`WRITE_TESTS`, or the lean
-   VERIFY) run `zones.py lock`. After every developer round run `zones.py check-lock`.
-   If tests changed: `zones.py check-lock --restore` and reject the round.
+1. Only you write the board, through `board.py` and `waves.py`. Roles hand work over
+   in their summary (`HANDOFF`, `NEW TASKS`); `waves.py finish` moves it into the task
+   logs and the board.
+2. Write zones. `waves.py start` snapshots the zones and `waves.py finish` verifies them.
+   On a violation `finish` applies nothing and lists the paths. Delete a new file
+   outside the zone, `git restore` a modified tracked file, show the user anything
+   else, then run `finish` again with `--void <role>`.
+3. Acceptance test lock. `waves.py finish` locks the tests after `WRITE_TESTS` (or the
+   lean VERIFY). After a developer round it checks the lock; if tests changed it
+   restores them and voids the round.
 4. No one reviews their own work.
 5. "Done" without proof is not accepted: a command with output or a path to a PNG/WAV.
-   Send a summary without `CHECK` back to its agent.
+   `waves.py finish` lists a summary without `CHECK` or `FILES` under "Needs you"; send
+   it back to its agent.
 
 ## Producer tools
 
 After init they live in `Studio/tools/`. Run them from the project root.
 
 ```
-python3 Studio/tools/board.py new --owner <role> --mode <MODE> --title "<…>" [--feature F-001] [--sprint N]
-        [--deps T-1,T-2] [--reviewers a,b] [--inputs p1,p2] [--outputs p1,p2] [--desc "<…>"] [--done-when "a;b"]
-python3 Studio/tools/board.py next --batch [--sprint N] [--json]   # one line per agent run: RUN|REVIEW role mode ids
-python3 Studio/tools/board.py start|finish T-007 [T-008 …]
-python3 Studio/tools/board.py review T-007 <reviewer> approve|changes [--file Studio/reviews/art/S1-W3.md]
-python3 Studio/tools/board.py set T-007 status=todo deps=+T-012 rework=+1
-python3 Studio/tools/board.py block|unblock T-007 ["<reason>"]
-python3 Studio/tools/board.py log T-007 "S1 artist → art-director: …"
-python3 Studio/tools/board.py render | validate | summary [--sprint N] | show T-007
-python3 Studio/tools/budget.py profile <lean|standard|thorough> | routes | route <role> <mode> [--escalate]
-python3 Studio/tools/budget.py log --role <r> --mode <m> [--tasks ids] [--tokens N] | check --next <runs> | report
-python3 Studio/tools/zones.py snapshot W3 | verify W3 --roles artist,developer | lock | check-lock [--restore]
+python3 Studio/tools/waves.py start [--max K]                       # a wave: budget, snapshot, start, packs, prompts
+python3 Studio/tools/waves.py finish --agent <role>=<agent id> …    # summaries → board, spend, zones, lock, ledger
+python3 Studio/tools/waves.py status | solo --role <r> --mode <m> --agent <id> --report <path>
+python3 Studio/tools/board.py import Studio/meetings/S<n>-planning/minutes.md   # every task of '## Tasks'
+python3 Studio/tools/board.py new --owner <role> --mode <MODE> --title "<…>" [--feature F-001] [--deps T-1,T-2]
+        [--reviewers a,b] [--inputs p1,p2] [--outputs p1,p2] [--desc "<…>"] [--done-when "a;b"]
+python3 Studio/tools/board.py set T-007 status=todo deps=+T-012 | block|unblock T-007 ["<reason>"]
+python3 Studio/tools/board.py render | validate | summary [--sprint N] | next --batch
+python3 Studio/tools/budget.py profile <lean|standard|thorough> | routes | route <role> <mode> | report
+python3 Studio/tools/tokens.py report [--session <id>]             # real spend from the transcripts
 python3 Studio/tools/contact_sheet.py <out.png> <in.png>... [--cols N] [--labels]
 ```
+
+For a manual repair the lower-level commands are there too: `board.py start|finish|
+review|log|pack`, `budget.py log|check`, `zones.py snapshot|verify|lock|check-lock`
+(each with `--help`).
 
 ## Agent prompt
 
@@ -127,9 +130,13 @@ LANG=<language code>
 PROFILE=<budget profile>
 SPRINT=<n>
 TASKS=T-007[,T-008]
+PACK=<wave runs only: Studio/.state/packs/…>
 REPORT=<path from the table below>
 CONTEXT: <paths: reviews, bugs, meeting files, user answers, stack profile>
 ```
+
+In a wave `waves.py start` prints this prompt for you. The agent puts its summary at the
+top of `REPORT` under `## Summary` and answers you in one line.
 
 | Mode | REPORT |
 |---|---|
@@ -146,14 +153,19 @@ CONTEXT: <paths: reviews, bugs, meeting files, user answers, stack profile>
 
 1. `PROJECT` is the current folder, the game repo root. If it is not a git repo, offer
    `git init` to the user and wait for the answer.
-2. If `Studio/ledger.md` exists, read it and run `board.py next --batch` and
-   `budget.py report`, then resume from the recorded step. Otherwise run:
+2. If `Studio/ledger.md` exists, read it and run `waves.py status`, `board.py next
+   --batch` and `budget.py report`, then resume from the recorded step. An open wave
+   is finished first: relaunch the runs without a report, then `waves.py finish`. Otherwise run:
    `python3 "SKILL_DIR/tools/studio_init.py" "$PROJECT" --language <code> [--game "<title>"]`.
 3. Write the user's idea verbatim to `Studio/kickoff/idea.md`, with the brief path if
    there is one. Write the `autopilot` flag to `studio.json`. If a profile was given,
    apply it now with `budget.py profile`.
-4. After every step update `Studio/ledger.md`: step, sprint, wave, agent ids, gate
-   decisions. The ledger survives compaction and new sessions.
+4. After every step update `Studio/ledger.md`: step, sprint, gate decisions.
+   `waves.py` records the waves itself, and the agent ids in `Studio/.state/agents.json`.
+   The ledger survives compaction and new sessions.
+5. Runs outside a wave (kickoff, pre-production, spec, meeting, screen review): after
+   each one run `waves.py solo --role <r> --mode <m> --agent <id> --report <REPORT>`. It
+   logs the spend and prints the summary from the report.
 
 ## Step 1. Kickoff and grilling
 
@@ -220,50 +232,49 @@ CONTEXT: <paths: reviews, bugs, meeting files, user answers, stack profile>
    of its first `WORK`.
 4. If there was a meeting, game-designer `MEETING_RESOLVE` answers the questions and
    finalizes the AC.
-5. Write `Studio/meetings/S<n>-planning/minutes.md`. Create tasks from the template of
-   the active profile (`Studio/PROTOCOL.md` §5) plus the roles' proposals, including
-   the verify and accept tasks. Then `board.py validate` and `render`.
+5. Write `Studio/meetings/S<n>-planning/minutes.md`: the decisions, then a `## Tasks`
+   section with one task line per task, from the template of the active profile
+   (`Studio/PROTOCOL.md` §5) plus the roles' proposals, including the verify and accept
+   tasks. Example:
+   ```
+   - architect/PLAN: Tech plan F-001 [id: plan] [feature: F-001]
+   - developer/WORK: Build F-001 [deps: plan] [reviewers: architect] [feature: F-001]
+   ```
+   Create them in one call: `board.py import Studio/meetings/S<n>-planning/minutes.md`,
+   then `board.py validate` and `render`.
 6. Ask the user feature-blocking questions right away; in `autopilot` take the
    recommendation. Write non-blocking ones to `Studio/questions.md`.
 
 ### 3.2 Waves
 
-Repeat while `board.py next --batch --sprint N` returns anything:
+Repeat while there is ready work:
 
-1. Pick groups. Unblocking work goes first: REVIEW, ACCEPT, VERIFY, PLAN. At most
-   `limits.parallel_agents` runs and one run per role.
-2. `budget.py check --next <runs>`. Exit 1 means stop and call an early gate.
-3. `zones.py snapshot W<k>`, `board.py start <ids>`, then launch the agents with the
-   model from `budget.py route`.
-4. Wait for all of them. Log each run with `budget.py log`. Then `zones.py verify W<k>
-   --roles …`. If the wave had a developer, also run `zones.py check-lock`.
-5. Process the summaries:
-   - `DONE`/`DONE_WITH_CONCERNS` → `board.py finish`. After the tests are written run
-     `zones.py lock`.
-   - A reviewer's `APPROVE`/`CHANGES_REQUESTED` → `board.py review T <role>
-     approve|changes`. For a batched review add `--file <batch review path>`. For rework
-     `board.py next --batch` returns `FIX` with the review path in `context`.
-   - VERIFY with bugs (`CHANGES_REQUESTED`): create developer `FIX` tasks with the
-     paths of `QA/bugs/B-*.md`, set the verify task back to `todo` with `deps=+<fixes>`.
-   - ACCEPT `APPROVE` means the feature is accepted. With `git.auto_commit`, commit as
-     `<F-NNN>: <feature title>` without Co-Authored-By. `CHANGES_REQUESTED` → create the
-     tasks from `NEW TASKS` and set ACCEPT back to `todo` with the new deps.
-   - `NEEDS_INPUT` → `board.py block` and the question in `questions.md`. In
-     `autopilot` take the recommendation, record it in `decisions.md`, `unblock` and
-     rerun the agent with the answer in `CONTEXT`.
-   - `TEST_DISPUTE` → the architect settles it (`CODE_REVIEW`, the dispute in
-     `CONTEXT`). If the test is wrong, qa `FIX` corrects it and you lock again. If the
-     test is right, the developer continues.
-   - `BLOCKED` → `board.py block`; resolve it yourself or bring it to the gate.
-   - `HANDOFF` → `board.py log` into the receiving task. `NEW TASKS` that belong to
-     this sprint's features: create them now. Everything else goes to
-     `Studio/proposals.md` for the next planning.
-6. If a task's `rework` exceeds `limits.rework_cycles`, give it to a fresh agent with
-   `budget.py route … --escalate`. If that fails too, block it and ask the user.
-7. `board.py render`, then record the wave in the ledger.
+1. `python3 Studio/tools/waves.py start`. It prints one block per run: the role, mode,
+   tasks, model, effort, whether to continue an agent, and the prompt. `OVER BUDGET`
+   means an early gate. `No ready tasks` means the sprint is over or blocked.
+2. Launch every run of the block in one message with its model and effort; a run marked
+   `continue agent <id>` goes through `SendMessage`/`send_input` with its prompt. Wait
+   for all of them.
+3. `python3 Studio/tools/waves.py finish --agent <role>=<agent id> …`, one `--agent`
+   per run. It reads the summaries, moves the board, creates new tasks and proposals,
+   logs the spend, verifies the zones and the test lock and updates the ledger.
+4. Act only on what it lists under "Needs you":
+   - `NEEDS_INPUT`: the task is blocked and the question is in `questions.md`. Ask the
+     user now if it blocks a feature; in `autopilot` take the recommendation, record it
+     in `decisions.md`, `board.py unblock` and add the answer's path to that task's
+     next `CONTEXT`.
+   - `TEST_DISPUTE`: launch the architect `CODE_REVIEW` with the report in `CONTEXT`.
+     If the test is wrong, qa `FIX` corrects it; `waves.py finish` locks it again.
+   - `BLOCKED`, concerns: resolve them yourself or bring them to the gate.
+   - no summary, no proof or an unreadable task line: send it back to that agent
+     (continue it) and run `waves.py finish` again; the wave stays open until then.
+   - `ACCEPT` accepted a feature and `git.auto_commit` is on: commit as
+     `<F-NNN>: <feature title>` without Co-Authored-By.
+5. A task past `limits.rework_cycles` gets an escalated run from `waves.py start`; if
+   that fails too, `waves.py start` blocks it: ask the user.
 
 Call an early gate when every remaining task is blocked, a zone violation cannot be
-reverted, the rework limit is exhausted or `budget.py check` says over budget.
+reverted, the rework limit is exhausted or the budget cap is reached.
 
 ### 3.3 Sprint end
 
@@ -271,8 +282,9 @@ reverted, the rework limit is exhausted or `budget.py check` says over budget.
    artist picks its findings up into Art TODO at the next planning.
 2. Build `Studio/reports/S<n>/sheet.png` from the screenshots and the new art.
 3. Write `Studio/reports/S<n>/retro.md` yourself: 2–5 points on what got in the way,
-   what to change, and where the tokens went (`budget.py report`). It goes into the
-   next planning's `CONTEXT`.
+   what to change, and where the tokens went (`budget.py report`; in Claude Code also
+   `tokens.py report --top 5` for the start prefix share and files read more than
+   once). It goes into the next planning's `CONTEXT`.
 
 ## Step 4. Sprint GATE
 

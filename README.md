@@ -129,11 +129,28 @@ matters and cuts repetition everywhere else.
 | Reviews | once per feature | batched per wave | every task, fresh reviewer |
 | Acceptance tests | written by QA after the code | written by QA before the code | before the code |
 | Full test run, build, screenshots | once per sprint | once per sprint | per feature |
-| Cap per sprint | 15 agent runs / 1.2M tokens | 30 / 3M | 60 / 8M |
+| Cap per sprint | 15 agent runs / 3M tokens | 30 / 6M | 60 / 12M |
 
-What makes it cheap:
-- **Model per mode, not per role.** Agents default to Sonnet (medium effort in Codex).
-  Opus only for decisions that drive everything else (spec, tech plan, acceptance), Haiku
+Tokens are weighted (cache reads at 0.1×, output at 5×, as on the price list) and
+include the producer. The caps are a first estimate; `tokens.py report` shows the real
+figures after a sprint.
+
+Where the tokens actually go, measured on comparable multi-agent runs: an agent that
+inherits the session's tools also inherits the list of all your skills and MCP tools and
+re-sends it with every request (42–83% of agent input), and the producer re-sends its
+whole context with every bookkeeping call (32–72% of a session). So:
+
+- **Lean agents.** Every agent has an explicit tool list and medium effort. A probe run
+  starts at 7.6K tokens instead of 21.9K with inherited tools
+  (`scripts/probe_overhead.py` measures it).
+- **Context packs.** `board.py pack` puts a run's tasks, AC, its part of the spec and
+  the review findings into one file, so the agent does not spend turns collecting them.
+- **Two calls per wave.** `waves.py start` and `waves.py finish` do the producer's
+  bookkeeping; agents answer in one line and leave the summary in their report.
+- **Reuse only when cheaper.** An agent is continued only while its context is small;
+  otherwise a fresh agent with a pack costs less.
+- **Model per mode, not per role.** Agents default to Sonnet with medium effort. Opus
+  only for decisions that drive everything else (spec, tech plan, acceptance), Haiku
   for meeting replies and, in lean, for sound, text and levels. `budget.py routes` shows
   the table.
 - **Batches.** One agent run does all ready tasks of a role; a reviewer reviews a whole
@@ -145,8 +162,8 @@ What makes it cheap:
 - **Tests at the end.** The full suite, the build and the screenshots run once in QA's
   verification; the developer runs only its own tests, the architect reviews the diff
   without rerunning them.
-- **Budget guard.** `budget.py` counts runs and tokens per sprint; over the cap the
-  producer stops and asks you.
+- **Budget guard.** `waves.py finish` reads each run's real spend from the Claude Code
+  transcripts and `budget.py` checks the cap; over it the producer stops and asks you.
 - **Short context.** Size limits for every document and summary. After a sprint gate you
   can `/clear` and continue: the producer resumes from `Studio/ledger.md`.
 
@@ -190,8 +207,10 @@ Plain Python 3 stdlib, nothing to install. They are copied into `Studio/tools/` 
 | `sfx.py` | procedural SFX (sfxr-like presets) → WAV, peak and clipping analysis |
 | `chiptune.py` | text score → looping WAV |
 | `level_preview.py` | ASCII level → PNG preview, marker and reachability check, JSON export |
-| `board.py` | task board: create, statuses, reviews, ready tasks in batches, BOARD.md |
+| `board.py` | task board: create, import from minutes, statuses, reviews, batches, context packs, BOARD.md |
+| `waves.py` | a wave in two producer calls: start (prompts, packs) and finish (summaries → board) |
 | `budget.py` | budget profiles, model routing, spend per sprint and the cap check |
+| `tokens.py` | real token spend from Claude Code transcripts: producer, each run, repeated reads |
 | `quiet.py` | run a command with the full output in a log and only errors on screen |
 | `zones.py` | role write zones, snapshots, test lock, hook |
 | `studio_init.py` | lay out templates and tools in the project |

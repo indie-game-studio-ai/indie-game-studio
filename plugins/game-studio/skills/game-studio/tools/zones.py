@@ -186,12 +186,16 @@ def snapshot_path(zones, label):
     return zones.project / STATE_DIR / "snapshots" / f"{check_label(label)}.json"
 
 
-def command_snapshot(zones, args):
+def take_snapshot(zones, label):
     files = zones.walk()
-    target = snapshot_path(zones, args.label)
+    target = snapshot_path(zones, label)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({"label": args.label, "files": files}, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"snapshot {args.label}: {len(files)} files")
+    target.write_text(json.dumps({"label": label, "files": files}, ensure_ascii=False, indent=1), encoding="utf-8")
+    return len(files)
+
+
+def command_snapshot(zones, args):
+    print(f"snapshot {args.label}: {take_snapshot(zones, args.label)} files")
     return 0
 
 
@@ -203,11 +207,10 @@ def parse_roles(raw):
     return roles
 
 
-def command_verify(zones, args):
-    roles = parse_roles(args.roles)
-    source = snapshot_path(zones, args.label)
+def verify_changes(zones, label, roles):
+    source = snapshot_path(zones, label)
     if not source.is_file():
-        raise ZonesError(f"no snapshot {args.label}: run zones.py snapshot {args.label} first")
+        raise ZonesError(f"no snapshot {label}: run zones.py snapshot {label} first")
     before = json.loads(source.read_text(encoding="utf-8"))["files"]
     changes = []
     violations = []
@@ -219,6 +222,12 @@ def command_verify(zones, args):
             changes.append({"kind": kind, "path": path, "roles": writers})
         else:
             violations.append({"kind": kind, "path": path, "owners": zones.owners(path)})
+    return changes, violations
+
+
+def command_verify(zones, args):
+    roles = parse_roles(args.roles)
+    changes, violations = verify_changes(zones, args.label, roles)
     if args.json:
         print(json.dumps({"changes": changes, "violations": violations}, ensure_ascii=False, indent=2))
         return 1 if violations else 0
@@ -245,12 +254,12 @@ def lock_paths(zones, name):
     return base / f"{check_label(name)}.json", base / name
 
 
-def command_lock(zones, args):
+def lock_tests(zones, name):
     patterns = zones.acceptance_patterns()
     if not patterns:
         print("zones: paths.acceptance_tests is empty — the lock is empty", file=sys.stderr)
     files = zones.walk(patterns)
-    manifest, copies = lock_paths(zones, args.name)
+    manifest, copies = lock_paths(zones, name)
     if copies.exists():
         shutil.rmtree(copies)
     copies.mkdir(parents=True, exist_ok=True)
@@ -259,25 +268,28 @@ def command_lock(zones, args):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(zones.project / path, destination)
     manifest.write_text(
-        json.dumps({"name": args.name, "patterns": patterns, "files": files}, ensure_ascii=False, indent=1),
+        json.dumps({"name": name, "patterns": patterns, "files": files}, ensure_ascii=False, indent=1),
         encoding="utf-8",
     )
-    print(f"lock {args.name}: {len(files)} files")
+    return len(files)
+
+
+def command_lock(zones, args):
+    print(f"lock {args.name}: {lock_tests(zones, args.name)} files")
     return 0
 
 
-def command_check_lock(zones, args):
-    manifest, copies = lock_paths(zones, args.name)
+def has_lock(zones, name="acceptance"):
+    return lock_paths(zones, name)[0].is_file()
+
+
+def check_lock(zones, name, restore=False):
+    manifest, copies = lock_paths(zones, name)
     if not manifest.is_file():
-        raise ZonesError(f"no lock {args.name}: run zones.py lock --name {args.name} first")
+        raise ZonesError(f"no lock {name}: run zones.py lock --name {name} first")
     lock = json.loads(manifest.read_text(encoding="utf-8"))
     changes = diff(lock["files"], zones.walk(lock["patterns"]))
-    if not changes:
-        print(f"lock {args.name}: unchanged")
-        return 0
-    for kind, path in changes:
-        print(f"CHANGED {kind} {path}")
-    if args.restore:
+    if restore:
         for kind, path in changes:
             target = zones.project / path
             if kind == "added":
@@ -285,6 +297,17 @@ def command_check_lock(zones, args):
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(copies / path, target)
+    return changes
+
+
+def command_check_lock(zones, args):
+    changes = check_lock(zones, args.name, args.restore)
+    if not changes:
+        print(f"lock {args.name}: unchanged")
+        return 0
+    for kind, path in changes:
+        print(f"CHANGED {kind} {path}")
+    if args.restore:
         print(f"lock {args.name}: restored {len(changes)}")
     return 1
 

@@ -120,10 +120,11 @@
   "budget": {
     "profile": "standard",
     "max_agent_runs_per_sprint": 30,
-    "max_tokens_per_sprint": 3000000,
+    "max_tokens_per_sprint": 6000000,
     "meeting": "involved",
     "reviews": "batched",
     "reuse_reviewers": true,
+    "reuse_max_context": 40000,
     "verify": "sprint-end",
     "tests_first": true
   },
